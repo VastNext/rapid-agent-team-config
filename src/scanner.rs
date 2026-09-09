@@ -141,10 +141,10 @@ pub fn scan_environment(project_path: Option<&Path>, use_project: bool) -> ScanR
     if target_scope == "project" {
         if let Some(p) = project_path {
             let candidates = [
-                p.join(".opencode").join("opencode.jsonc"),
                 p.join(".opencode").join("opencode.json"),
-                p.join("opencode.jsonc"),
+                p.join(".opencode").join("opencode.jsonc"),
                 p.join("opencode.json"),
+                p.join("opencode.jsonc"),
             ];
             for cand in &candidates {
                 if cand.exists() {
@@ -159,20 +159,24 @@ pub fn scan_environment(project_path: Option<&Path>, use_project: bool) -> ScanR
         let global_dir = get_global_opencode_dir();
         let g_jsonc = global_dir.join("opencode.jsonc");
         let g_json = global_dir.join("opencode.json");
-        if g_jsonc.exists() {
-            config_files_to_read.push(g_jsonc);
-        } else if g_json.exists() {
+        if g_json.exists() {
             config_files_to_read.push(g_json);
         }
+        if g_jsonc.exists() {
+            config_files_to_read.push(g_jsonc);
+        }
     } else {
-        let jsonc_path = base_dir.join("opencode.jsonc");
         let json_path = base_dir.join("opencode.json");
-        if jsonc_path.exists() {
-            primary_config_path = Some(jsonc_path.clone());
-            config_files_to_read.push(jsonc_path);
-        } else if json_path.exists() {
+        let jsonc_path = base_dir.join("opencode.jsonc");
+        if json_path.exists() {
             primary_config_path = Some(json_path.clone());
             config_files_to_read.push(json_path);
+        }
+        if jsonc_path.exists() {
+            if primary_config_path.is_none() {
+                primary_config_path = Some(jsonc_path.clone());
+            }
+            config_files_to_read.push(jsonc_path);
         }
     }
 

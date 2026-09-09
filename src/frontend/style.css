@@ -61,7 +61,10 @@ body {
 }
 
 .brand-badge {
-  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #18235c;
   color: #fff;
   padding: 4px 10px;
   border-radius: var(--radius-sm);
@@ -69,6 +72,7 @@ body {
   font-size: 13px;
   box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
 }
+.brand-badge img { width: 20px; height: 20px; border-radius: 5px; display: block; }
 
 .header-brand h1 {
   font-size: 17px;

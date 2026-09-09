@@ -637,7 +637,8 @@ fn test_scanner_extracts_providers_models_and_config_bindings() {
         r#"{
             "provider": {
                 "openai": { "models": { "gpt-4o": {}, "gpt-4o-mini": {} } },
-                "deepseek": { "models": { "deepseek-chat": {} } }
+                "deepseek": { "models": { "deepseek-chat": {} } },
+                "openrouter": { "models": { "z-ai/glm-5": {} } }
             },
              "agent": {
                  "rapid-builder-deepseek-go": { "model": "deepseek/deepseek-chat" },
@@ -675,9 +676,11 @@ fn test_scanner_extracts_providers_models_and_config_bindings() {
     // provider 与模型
     assert!(scan.providers.contains(&"openai".to_string()));
     assert!(scan.providers.contains(&"deepseek".to_string()));
+    assert!(scan.providers.contains(&"openrouter".to_string()));
     let model_ids: Vec<String> = scan.models.iter().map(|m| m.id.clone()).collect();
     assert!(model_ids.contains(&"openai/gpt-4o".to_string()));
     assert!(model_ids.contains(&"deepseek/deepseek-chat".to_string()));
+    assert!(model_ids.contains(&"openrouter/z-ai/glm-5".to_string()));
 
     // agent 绑定来自 opencode.json 的 agent 键
     assert_eq!(

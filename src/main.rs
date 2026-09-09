@@ -11,6 +11,7 @@ mod writer;
 
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use tao::{
     dpi::LogicalSize,
@@ -19,6 +20,16 @@ use tao::{
     window::WindowBuilder,
 };
 use wry::{http::Response, WebViewBuilder};
+
+const ICON_PNG: &[u8] = include_bytes!("../assets/icon.png");
+
+fn load_window_icon() -> Option<tao::window::Icon> {
+    let decoder = png::Decoder::new(Cursor::new(ICON_PNG));
+    let mut reader = decoder.read_info().ok()?;
+    let mut buffer = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buffer).ok()?;
+    tao::window::Icon::from_rgba(buffer, info.width, info.height).ok()
+}
 
 #[derive(Debug, Deserialize)]
 struct IpcMessage {
@@ -273,6 +284,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("Rapid Agent Team Configurator")
+        .with_window_icon(load_window_icon())
         .with_inner_size(LogicalSize::new(1040.0, 720.0))
         .with_min_inner_size(LogicalSize::new(800.0, 560.0))
         .build(&event_loop)?;
@@ -280,6 +292,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let html_content = include_str!("frontend/index.html");
     let css_content = include_str!("frontend/style.css");
     let js_content = include_str!("frontend/app.js");
+    let icon_content = include_bytes!("../assets/icon.png");
 
     let builder = WebViewBuilder::new()
         .with_custom_protocol("app".into(), move |_webview_id, request| {
@@ -296,6 +309,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "/app.js" => Response::builder()
                     .header("Content-Type", "application/javascript; charset=utf-8")
                     .body(Cow::Borrowed(js_content.as_bytes()))
+                    .unwrap(),
+                "/icon.png" => Response::builder()
+                    .header("Content-Type", "image/png")
+                    .body(Cow::Borrowed(&icon_content[..]))
                     .unwrap(),
                 "/api/ipc" => {
                     let req_body = request.body();

@@ -1,6 +1,6 @@
 [package]
 name = "rapid-agent-team-config"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 description = "Cross-platform GUI configuration and installation wizard for Rapid Agent Team in OpenCode"
 authors = ["VastNext"]
@@ -26,6 +26,7 @@ percent-encoding = "2"
 ureq = { version = "2.10", default-features = false, features = ["tls", "socks-proxy", "json"] }
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
 sha2 = { version = "0.10", default-features = false }
+png = "0.17"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 webview2-com = "0.35"
