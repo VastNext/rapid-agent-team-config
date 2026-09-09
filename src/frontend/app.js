@@ -308,12 +308,11 @@ function renderTeamGrid(scan) {
 
     let selectOptions = '';
     for (const [provider, list] of Object.entries(modelsByProvider)) {
-      selectOptions += `<optgroup label="Provider: ${escapeHtml(provider)}">`;
+      selectOptions += `<div class="model-provider-label">Provider: ${escapeHtml(provider)}</div>`;
       list.forEach(m => {
         const isSel = m.id === selectedModel ? 'selected' : '';
         selectOptions += `<button type="button" class="model-option ${isSel ? 'selected' : ''}" data-model="${escapeHtml(m.id)}">${escapeHtml(m.id)}</button>`;
       });
-      selectOptions += `</optgroup>`;
     }
 
     card.innerHTML = `

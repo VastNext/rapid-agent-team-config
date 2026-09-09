@@ -361,13 +361,15 @@ body {
   outline: none;
 }
 
-.model-combobox { position: relative; flex: 1; }
-.model-options { display: none; position: absolute; z-index: 5; left: 0; right: 0; max-height: 220px; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
+.model-combobox { position: relative; flex: 1; z-index: 1; }
+.model-combobox:focus-within { z-index: 20; }
+.model-options { display: none; position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px); max-height: 220px; overflow-y: auto; overflow-x: hidden; background: var(--bg-primary); border: 1px solid var(--border-focus); border-radius: 8px; padding: 4px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45); }
 .model-options.open { display: grid; gap: 2px; }
 .model-combobox:focus-within .model-options { display: grid; gap: 2px; }
-.model-option { border: 0; background: transparent; color: var(--text); text-align: left; padding: 7px 9px; border-radius: 5px; cursor: pointer; }
-.model-option:hover, .model-option.selected { background: var(--surface-muted); }
+.model-option { display: block; width: 100%; border: 0; background: var(--bg-secondary); color: var(--text-main); text-align: left; line-height: 1.35; padding: 8px 10px; border-radius: 5px; cursor: pointer; white-space: normal; overflow-wrap: anywhere; }
+.model-option:hover, .model-option.selected { background: var(--bg-tertiary); color: #fff; }
 .model-option[hidden] { display: none; }
+.model-provider-label { color: var(--text-muted); font-size: 11px; font-weight: 700; padding: 7px 10px 3px; border-top: 1px solid var(--border); }
 
 .model-select:focus {
   border-color: var(--border-focus);
