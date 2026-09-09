@@ -10,18 +10,22 @@
 //! 7. Full parity between ZIP installer and Local Directory installer
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TeamConfigManifest {
+    pub team: Option<String>,
     pub name: Option<String>,
     pub version: Option<String>,
     pub description: Option<String>,
     pub agents: Option<Vec<String>>,
     pub commands: Option<Vec<String>>,
     pub skills: Option<Vec<String>>,
+    pub command: Option<String>,
+    pub skill: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +62,10 @@ pub fn is_safe_zip_path(dest_dir: &Path, entry_name: &str) -> Option<PathBuf> {
     }
 
     if entry_name.len() >= 2 && entry_name.as_bytes()[1] == b':' {
+        return None;
+    }
+
+    if entry_name.split(['/', '\\']).any(|part| part == "..") {
         return None;
     }
 
@@ -149,7 +157,11 @@ pub fn is_allowed_team_file(rel_path: &Path) -> bool {
 ///   match the `rapid-*` naming convention so that only Rapid Team
 ///   components can be declared by the manifest.
 pub fn validate_manifest(manifest: &TeamConfigManifest) -> Result<(), String> {
-    let name = manifest.name.as_deref().unwrap_or("");
+    let name = manifest
+        .name
+        .as_deref()
+        .or(manifest.team.as_deref())
+        .unwrap_or("");
     let n = name.to_lowercase();
     if !n.contains("rapid") {
         return Err(format!("Manifest 名称 '{}' 与 Rapid Dev Team 不匹配", name));
@@ -176,6 +188,26 @@ pub fn validate_manifest(manifest: &TeamConfigManifest) -> Result<(), String> {
     check_list(manifest.agents.as_ref(), "agents")?;
     check_list(manifest.commands.as_ref(), "commands")?;
     check_list(manifest.skills.as_ref(), "skills")?;
+
+    let agents = manifest
+        .agents
+        .as_ref()
+        .ok_or("Manifest 缺少 agents 清单")?;
+    let has_command = manifest
+        .commands
+        .as_ref()
+        .map(|items| items.iter().any(|entry| entry == "rapid-dev"))
+        .unwrap_or(false)
+        || manifest.command.as_deref() == Some("rapid-dev");
+    let has_skill = manifest
+        .skills
+        .as_ref()
+        .map(|items| items.iter().any(|entry| entry == "rapid-dev-team"))
+        .unwrap_or(false)
+        || manifest.skill.as_deref() == Some("rapid-dev-team");
+    if !agents.iter().any(|entry| entry == "rapid-dev-team") || !has_command || !has_skill {
+        return Err("Manifest 未包含 Rapid Team 必需的 Agent、Command 或 Skill 清单".to_string());
+    }
 
     Ok(())
 }
@@ -233,6 +265,7 @@ pub fn generate_zip_install_plan(
 
     let root_prefix = find_zip_root_prefix(&entry_names);
     let mut plan_items = Vec::new();
+    let mut normalized_paths = BTreeSet::new();
     let mut manifest_info = None;
     let mut has_team_files = false;
     let mut overwrite_count = 0;
@@ -257,7 +290,7 @@ pub fn generate_zip_install_plan(
 
         let rel_path = Path::new(relative_name);
         if !is_allowed_team_file(rel_path) {
-            continue;
+            return Err(format!("压缩包包含不允许安装的文件: {}", relative_name));
         }
 
         let Some(out_path) = is_safe_zip_path(target_opencode_dir, relative_name) else {
@@ -271,6 +304,11 @@ pub fn generate_zip_install_plan(
             } else {
                 return Err("无法读取 team.config.json 内容".to_string());
             }
+        }
+
+        let normalized = out_path.to_string_lossy().to_string();
+        if !normalized_paths.insert(normalized) {
+            return Err(format!("压缩包包含重复的目标路径: {}", relative_name));
         }
 
         let is_overwrite = out_path.exists();
@@ -384,7 +422,7 @@ pub fn install_from_zip(
 
         let rel_path = Path::new(relative_name);
         if !is_allowed_team_file(rel_path) {
-            continue;
+            return Err(format!("压缩包包含不允许安装的文件: {}", relative_name));
         }
 
         let Some(out_path) = is_safe_zip_path(target_opencode_dir, relative_name) else {
@@ -643,22 +681,28 @@ mod tests {
     #[test]
     fn test_validate_manifest() {
         let valid = TeamConfigManifest {
+            team: Some("rapid-dev-team".to_string()),
             name: Some("Rapid Dev Team".to_string()),
             version: Some("1.0.0".to_string()),
             description: Some("Rapid Agent Team".to_string()),
             agents: Some(vec!["rapid-dev-team".to_string()]),
             commands: Some(vec!["rapid-dev".to_string()]),
             skills: None,
+            command: None,
+            skill: Some("rapid-dev-team".to_string()),
         };
         assert!(validate_manifest(&valid).is_ok());
 
         let invalid = TeamConfigManifest {
+            team: None,
             name: Some("Unrelated Hacker Package".to_string()),
             version: Some("1.0.0".to_string()),
             description: None,
             agents: None,
             commands: None,
             skills: None,
+            command: None,
+            skill: None,
         };
         assert!(validate_manifest(&invalid).is_err());
     }
@@ -666,22 +710,28 @@ mod tests {
     #[test]
     fn test_validate_manifest_requires_version() {
         let no_version = TeamConfigManifest {
+            team: Some("rapid-dev-team".to_string()),
             name: Some("Rapid Dev Team".to_string()),
             version: None,
             description: None,
             agents: None,
             commands: None,
             skills: None,
+            command: Some("rapid-dev".to_string()),
+            skill: Some("rapid-dev-team".to_string()),
         };
         assert!(validate_manifest(&no_version).is_err());
 
         let empty_version = TeamConfigManifest {
+            team: Some("rapid-dev-team".to_string()),
             name: Some("Rapid Dev Team".to_string()),
             version: Some("   ".to_string()),
             description: None,
             agents: None,
             commands: None,
             skills: None,
+            command: Some("rapid-dev".to_string()),
+            skill: Some("rapid-dev-team".to_string()),
         };
         assert!(validate_manifest(&empty_version).is_err());
     }
@@ -689,39 +739,48 @@ mod tests {
     #[test]
     fn test_validate_manifest_rejects_non_rapid_list_entries() {
         let bad_agents = TeamConfigManifest {
+            team: Some("rapid-dev-team".to_string()),
             name: Some("Rapid Dev Team".to_string()),
             version: Some("1.0.0".to_string()),
             description: None,
             agents: Some(vec!["random-agent".to_string()]),
             commands: None,
             skills: None,
+            command: Some("rapid-dev".to_string()),
+            skill: Some("rapid-dev-team".to_string()),
         };
         assert!(validate_manifest(&bad_agents).is_err());
 
         let bad_commands = TeamConfigManifest {
+            team: Some("rapid-dev-team".to_string()),
             name: Some("Rapid Dev Team".to_string()),
             version: Some("1.0.0".to_string()),
             description: None,
             agents: None,
             commands: Some(vec!["deploy".to_string()]),
             skills: None,
+            command: None,
+            skill: Some("rapid-dev-team".to_string()),
         };
         assert!(validate_manifest(&bad_commands).is_err());
 
         let bad_skills = TeamConfigManifest {
+            team: Some("rapid-dev-team".to_string()),
             name: Some("Rapid Dev Team".to_string()),
             version: Some("1.0.0".to_string()),
             description: None,
             agents: None,
             commands: None,
             skills: Some(vec!["evil-skill".to_string()]),
+            command: Some("rapid-dev".to_string()),
+            skill: Some("rapid-dev-team".to_string()),
         };
         assert!(validate_manifest(&bad_skills).is_err());
     }
 
     #[test]
     fn test_parse_and_validate_manifest() {
-        let ok_json = r#"{"name":"Rapid Dev Team","version":"1.0.0","agents":["rapid-dev-team"]}"#;
+        let ok_json = r#"{"name":"Rapid Dev Team","version":"1.0.0","agents":["rapid-dev-team"],"commands":["rapid-dev"],"skills":["rapid-dev-team"]}"#;
         let parsed = parse_and_validate_manifest(ok_json).expect("must parse");
         assert_eq!(parsed.name.as_deref(), Some("Rapid Dev Team"));
 

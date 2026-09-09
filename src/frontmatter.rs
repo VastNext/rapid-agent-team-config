@@ -109,7 +109,9 @@ pub fn parse_frontmatter(content: &str) -> Option<FrontmatterInfo> {
 /// Replace the `model:` line inside the YAML frontmatter.
 /// If content has no valid YAML frontmatter, returns an Err to protect file integrity.
 /// If `model:` doesn't exist inside the frontmatter, it appends `model: <new_model>` before the closing `---`.
-/// Line endings (\r\n or \n) and surrounding non-frontmatter bytes are strictly preserved.
+/// The implementation splices bytes: every byte that does not belong to the replaced
+/// `model:` value (including per-line CRLF/LF endings, indentation and the closing
+/// `---` sequence) is kept exactly as-is in the original string.
 pub fn replace_frontmatter_model(content: &str, new_model: &str) -> Result<String, String> {
     if !content.starts_with("---") {
         return Err(
@@ -117,7 +119,7 @@ pub fn replace_frontmatter_model(content: &str, new_model: &str) -> Result<Strin
         );
     }
 
-    let (opening_len, newline) = if content.starts_with("---\r\n") {
+    let (opening_len, opening_newline) = if content.starts_with("---\r\n") {
         (5, "\r\n")
     } else if content.starts_with("---\n") {
         (4, "\n")
@@ -130,38 +132,85 @@ pub fn replace_frontmatter_model(content: &str, new_model: &str) -> Result<Strin
         return Err("文件 YAML Frontmatter 未闭合 (未找到闭合 ---)，拒绝修改".to_string());
     };
 
-    let fm_content = &sub[..close_pos];
-    let rest = &sub[close_pos..];
+    // body 是 frontmatter 的全部内容，但不含闭合 `---` 前的那一个换行符。
+    // body_end 即该换行符(若有)或 `---` 本身的起始字节位置。
+    let body_end = opening_len + close_pos;
+    let body = &content[opening_len..body_end];
+    let trimmed_model = new_model.trim();
 
-    let mut lines: Vec<String> = if fm_content.is_empty() {
-        Vec::new()
-    } else {
-        fm_content
-            .split('\n')
-            .map(|l| l.trim_end_matches('\r').to_string())
-            .collect()
-    };
+    // 在 body 内按原始字节扫描各行，寻找 `model:` 键。记录该行在整串中的
+    // 内容区段 [line_content_start, line_content_end)，其中 end 不包含行尾换行符。
+    let mut line_start = 0usize; // 相对 body 起始的字节位置
+    let mut found_model: Option<(usize, usize, usize)> = None; // (line_start, content_end, indent_end)
 
-    let mut model_found = false;
-    for line in lines.iter_mut() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("model:") {
-            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
-            *line = format!("{}model: {}", indent, new_model.trim());
-            model_found = true;
+    while line_start <= body.len() {
+        let nl_rel = body[line_start..].find('\n');
+        let content_end = match nl_rel {
+            Some(i) => line_start + i,
+            None => body.len(),
+        };
+        // 去掉 CRLF 中的 \r，仅属于该行的“可见内容”。
+        let mut visible_end = content_end;
+        if visible_end > line_start && body.as_bytes()[visible_end - 1] == b'\r' {
+            visible_end -= 1;
+        }
+        // 记录行首缩进（空格/制表符）结束位置
+        let mut indent_end = line_start;
+        while indent_end < visible_end {
+            let b = body.as_bytes()[indent_end];
+            if b == b' ' || b == b'\t' {
+                indent_end += 1;
+            } else {
+                break;
+            }
+        }
+        if body[indent_end..visible_end].starts_with("model:") {
+            found_model = Some((line_start, visible_end, indent_end));
             break;
+        }
+        match nl_rel {
+            Some(_) => line_start = content_end + 1,
+            None => break,
         }
     }
 
-    if !model_found {
-        lines.push(format!("model: {}", new_model.trim()));
-    }
+    let mut result = String::with_capacity(content.len() + trimmed_model.len() + 4);
 
-    let joined_fm = lines.join(newline);
-    let mut result = String::with_capacity(opening_len + joined_fm.len() + rest.len());
-    result.push_str(&content[..opening_len]);
-    result.push_str(&joined_fm);
-    result.push_str(rest);
+    if let Some((ls_rel, ve_rel, ie_rel)) = found_model {
+        // 字节级替换：仅替换整行的“可见内容”区段，保留原始缩进，行尾换行原样保留。
+        let ls = opening_len + ls_rel;
+        let ve = opening_len + ve_rel;
+        let ie = opening_len + ie_rel;
+        result.push_str(&content[..ls]);
+        result.push_str(&content[ls..ie]); // 原始缩进
+        result.push_str("model: ");
+        result.push_str(trimmed_model);
+        result.push_str(&content[ve..]);
+    } else {
+        // 未找到 model: 键 → 在闭合 `---` 前追加一行。
+        let after_body = &content[body_end..];
+        let style = if after_body.starts_with("\r\n") {
+            "\r\n"
+        } else if after_body.starts_with('\n') {
+            "\n"
+        } else {
+            opening_newline
+        };
+
+        result.push_str(&content[..body_end]);
+        if body.is_empty() && after_body.starts_with("---") {
+            // frontmatter 完全为空且 `---` 紧邻起始标记 → 需自带行尾
+            result.push_str("model: ");
+            result.push_str(trimmed_model);
+            result.push_str(style);
+        } else {
+            // 常规情况：在现有换行之后、`---` 之前插入独立一行
+            result.push_str(style);
+            result.push_str("model: ");
+            result.push_str(trimmed_model);
+        }
+        result.push_str(after_body);
+    }
 
     Ok(result)
 }
@@ -189,43 +238,76 @@ mod tests {
     }
 
     #[test]
-    fn test_replace_frontmatter_model_existing_lf() {
+    fn test_replace_frontmatter_model_existing_lf_exact_bytes() {
         let doc = "---\ndescription: test\nmodel: old/model-v1\nmode: subagent\n---\n\n# Body";
         let updated = replace_frontmatter_model(doc, "new/model-v2").expect("Must succeed");
-        assert!(updated.contains("model: new/model-v2"));
-        assert!(!updated.contains("old/model-v1"));
-        assert!(updated.contains("# Body"));
+        // 严格字节级断言：其余行与换行符必须逐字节一致，只有 model 值变化
+        let expected = "---\ndescription: test\nmodel: new/model-v2\nmode: subagent\n---\n\n# Body";
+        assert_eq!(updated, expected);
         assert!(!updated.contains("\r"));
     }
 
     #[test]
-    fn test_replace_frontmatter_model_missing_lf() {
+    fn test_replace_frontmatter_model_missing_lf_exact_bytes() {
         let doc = "---\ndescription: test\nmode: subagent\n---\n\n# Body";
         let updated = replace_frontmatter_model(doc, "new/model-v2").expect("Must succeed");
-        assert!(updated.contains("model: new/model-v2"));
-        assert!(updated.contains("# Body"));
-        assert!(!updated.contains("\r"));
+        let expected = "---\ndescription: test\nmode: subagent\nmodel: new/model-v2\n---\n\n# Body";
+        assert_eq!(updated, expected);
     }
 
     #[test]
-    fn test_replace_frontmatter_model_existing_crlf() {
+    fn test_replace_frontmatter_model_existing_crlf_exact_bytes() {
         let doc = "---\r\ndescription: 极速团队\r\nmodel: old/model-v1\r\nmode: subagent\r\n---\r\n\r\n# Body\r\n中文正文";
         let updated = replace_frontmatter_model(doc, "new/model-v2").expect("Must succeed");
-        assert!(updated.contains("\r\n"));
+        let expected = "---\r\ndescription: 极速团队\r\nmodel: new/model-v2\r\nmode: subagent\r\n---\r\n\r\n# Body\r\n中文正文";
+        assert_eq!(updated, expected);
         assert!(!updated.replace("\r\n", "").contains("\n")); // Every newline is strictly CRLF
-        assert!(updated.contains("model: new/model-v2"));
-        assert!(!updated.contains("old/model-v1"));
-        assert!(updated.contains("# Body\r\n中文正文"));
     }
 
     #[test]
-    fn test_replace_frontmatter_model_missing_crlf() {
+    fn test_replace_frontmatter_model_missing_crlf_exact_bytes() {
         let doc = "---\r\ndescription: 极速团队\r\nmode: subagent\r\n---\r\n\r\n# Body\r\n中文正文";
         let updated = replace_frontmatter_model(doc, "new/model-v2").expect("Must succeed");
-        assert!(updated.contains("\r\n"));
+        let expected = "---\r\ndescription: 极速团队\r\nmode: subagent\r\nmodel: new/model-v2\r\n---\r\n\r\n# Body\r\n中文正文";
+        assert_eq!(updated, expected);
         assert!(!updated.replace("\r\n", "").contains("\n")); // Pure CRLF
-        assert!(updated.contains("model: new/model-v2"));
-        assert!(updated.contains("# Body\r\n中文正文"));
+    }
+
+    #[test]
+    fn test_replace_frontmatter_preserves_mixed_line_endings_per_line() {
+        // 每行独立换行风格必须保留：description 行为 LF、model 行为 CRLF、
+        // mode 行为 CRLF、闭合区段为 CRLF —— 替换前后这些非目标行不能有任何字节漂移。
+        let doc = "---\r\ndescription: a\nmodel: old/model\r\nmode: b\r\n---\r\n# Body";
+        let updated = replace_frontmatter_model(doc, "new/model").expect("Must succeed");
+        let expected = "---\r\ndescription: a\nmodel: new/model\r\nmode: b\r\n---\r\n# Body";
+        assert_eq!(updated, expected);
+        // description 行的 LF 换行必须原样保留
+        assert!(updated.contains("description: a\nmodel: new/model"));
+    }
+
+    #[test]
+    fn test_replace_frontmatter_model_first_line_exact() {
+        let doc = "---\nmodel: old/model\n---\nBody";
+        let updated = replace_frontmatter_model(doc, "new/model").expect("Must succeed");
+        assert_eq!(updated, "---\nmodel: new/model\n---\nBody");
+    }
+
+    #[test]
+    fn test_replace_frontmatter_model_insert_into_empty_fm() {
+        // 空 frontmatter + 紧随其后的闭合标记：需自行补全换行
+        let doc = "---\n---\nBody";
+        let updated = replace_frontmatter_model(doc, "new/model").expect("Must succeed");
+        assert_eq!(updated, "---\nmodel: new/model\n---\nBody");
+    }
+
+    #[test]
+    fn test_replace_frontmatter_model_keeps_indent_and_trailing_body_bytes() {
+        let doc = "---\r\ndescription: x\r\n    model:  old/model   \r\nmode: y\r\n---\r\nTail\r\n";
+        let updated = replace_frontmatter_model(doc, "new/model").expect("Must succeed");
+        let expected =
+            "---\r\ndescription: x\r\n    model: new/model\r\nmode: y\r\n---\r\nTail\r\n";
+        assert_eq!(updated, expected);
+        assert_eq!(updated, expected);
     }
 
     #[test]

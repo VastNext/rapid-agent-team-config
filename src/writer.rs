@@ -93,6 +93,7 @@ pub fn compute_backup_relative_path(base_dir: &Path, file_path: &Path) -> PathBu
 /// Generates diff previews and validation plan before applying
 pub fn generate_change_plan(base_opencode_dir: &Path, items: &[ModelChangeItem]) -> PlanResult {
     let mut changes = Vec::new();
+    let mut warnings = Vec::new();
     let planned_backup_dir = format!(
         ".backups/rapid-team-{}",
         SystemTime::now()
@@ -127,11 +128,18 @@ pub fn generate_change_plan(base_opencode_dir: &Path, items: &[ModelChangeItem])
             .to_string_lossy()
             .to_string();
 
-        let diff_preview = format!(
-            "- model: {}\n+ model: {}",
-            if orig.is_empty() { "(none)" } else { orig },
-            target
-        );
+        let diff_preview = match fs::read_to_string(path)
+            .map_err(|e| e.to_string())
+            .and_then(|content| {
+                let updated = replace_frontmatter_model(&content, target)?;
+                Ok(render_model_diff(&content, &updated))
+            }) {
+            Ok(diff) => diff,
+            Err(error) => {
+                warnings.push(format!("{}: {}", item.file_path, error));
+                continue;
+            }
+        };
 
         changes.push(DiffItem {
             agent_name: item.agent_name.clone(),
@@ -150,7 +158,32 @@ pub fn generate_change_plan(base_opencode_dir: &Path, items: &[ModelChangeItem])
         changes,
         has_changes,
         planned_backup_dir,
-        warning: None,
+        warning: if warnings.is_empty() {
+            None
+        } else {
+            Some(warnings.join("\n"))
+        },
+    }
+}
+
+fn render_model_diff(before: &str, after: &str) -> String {
+    let before_lines: Vec<&str> = before.lines().collect();
+    let after_lines: Vec<&str> = after.lines().collect();
+    let mut diff = Vec::new();
+    for (before_line, after_line) in before_lines.iter().zip(after_lines.iter()) {
+        if before_line != after_line {
+            diff.push(format!("- {}", before_line));
+            diff.push(format!("+ {}", after_line));
+        }
+    }
+    if before_lines.len() != after_lines.len() {
+        diff.push(format!("- 原文件共 {} 行", before_lines.len()));
+        diff.push(format!("+ 修改后共 {} 行", after_lines.len()));
+    }
+    if diff.is_empty() {
+        "无可见文本差异".to_string()
+    } else {
+        diff.join("\n")
     }
 }
 
@@ -278,9 +311,13 @@ pub fn apply_model_changes(
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let backup_dir = base_opencode_dir
-        .join(".backups")
-        .join(format!("rapid-team-{}", timestamp));
+    let backup_root = base_opencode_dir.join(".backups");
+    let mut backup_dir = backup_root.join(format!("rapid-team-{}", timestamp));
+    let mut suffix = 1u32;
+    while backup_dir.exists() {
+        backup_dir = backup_root.join(format!("rapid-team-{}-{}", timestamp, suffix));
+        suffix += 1;
+    }
 
     if let Err(e) = fs::create_dir_all(&backup_dir) {
         return Err(format!("无法创建备份目录: {}", e));
@@ -336,7 +373,11 @@ pub fn apply_model_changes(
             }
         };
 
-        let tmp_path = orig_path.with_extension("tmp_rapid_cfg");
+        let tmp_path = orig_path.with_extension(format!(
+            "tmp_rapid_cfg_{}_{}",
+            std::process::id(),
+            modified_paths.len()
+        ));
 
         if let Err(e) = fs::write(&tmp_path, &new_content) {
             apply_error = Some(format!("写入临时文件失败: {}", e));
@@ -345,6 +386,18 @@ pub fn apply_model_changes(
 
         if let Err(e) = atomic_replace(&tmp_path, &orig_path) {
             apply_error = Some(format!("原子替换失败 {}: {}", orig_path.display(), e));
+            break;
+        }
+
+        let written = match fs::read(&orig_path) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                apply_error = Some(format!("写入后无法复核 {}: {}", orig_path.display(), e));
+                break;
+            }
+        };
+        if written != new_content.as_bytes() {
+            apply_error = Some(format!("写入后内容复核失败: {}", orig_path.display()));
             break;
         }
 
@@ -379,11 +432,24 @@ mod tests {
 
     #[test]
     fn test_generate_change_plan_filters_unchanged() {
-        let base_dir = Path::new("/tmp/opencode");
+        let base_dir = std::env::temp_dir().join(format!(
+            "rapid_plan_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(base_dir.join("agents")).unwrap();
+        fs::write(
+            base_dir.join("agents/rapid-dev-team.md"),
+            "---\nmodel: old/model\n---\nBody",
+        )
+        .unwrap();
+        let agent_path = base_dir.join("agents/rapid-dev-team.md");
         let items = vec![
             ModelChangeItem {
                 agent_name: "rapid-dev-team".to_string(),
-                file_path: "/tmp/opencode/agents/rapid-dev-team.md".to_string(),
+                file_path: agent_path.to_string_lossy().to_string(),
                 original_model: Some("old/model".to_string()),
                 new_model: "new/model".to_string(),
                 expected_mtime: 0,
@@ -391,7 +457,10 @@ mod tests {
             },
             ModelChangeItem {
                 agent_name: "rapid-ui".to_string(),
-                file_path: "/tmp/opencode/agents/rapid-ui.md".to_string(),
+                file_path: base_dir
+                    .join("agents/rapid-ui.md")
+                    .to_string_lossy()
+                    .to_string(),
                 original_model: Some("same/model".to_string()),
                 new_model: "same/model".to_string(),
                 expected_mtime: 0,
@@ -399,7 +468,10 @@ mod tests {
             },
             ModelChangeItem {
                 agent_name: "rapid-scout".to_string(),
-                file_path: "/tmp/opencode/agents/rapid-scout.md".to_string(),
+                file_path: base_dir
+                    .join("agents/rapid-scout.md")
+                    .to_string_lossy()
+                    .to_string(),
                 original_model: Some("any/model".to_string()),
                 new_model: "".to_string(),
                 expected_mtime: 0,
@@ -407,12 +479,13 @@ mod tests {
             },
         ];
 
-        let plan = generate_change_plan(base_dir, &items);
+        let plan = generate_change_plan(&base_dir, &items);
         assert!(plan.has_changes);
         assert_eq!(plan.changes.len(), 1);
         assert_eq!(plan.changes[0].agent_name, "rapid-dev-team");
         assert!(plan.changes[0].diff_preview.contains("- model: old/model"));
         assert!(plan.changes[0].diff_preview.contains("+ model: new/model"));
+        let _ = fs::remove_dir_all(base_dir);
     }
 
     #[test]

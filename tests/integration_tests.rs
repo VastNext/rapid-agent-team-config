@@ -140,22 +140,28 @@ fn test_allowed_team_file_types_whitelist() {
 #[test]
 fn test_manifest_validation() {
     let valid = TeamConfigManifest {
+        team: Some("rapid-dev-team".to_string()),
         name: Some("Rapid Dev Team".to_string()),
         version: Some("0.1.0".to_string()),
         description: Some("Rapid Team Config".to_string()),
         agents: Some(vec!["rapid-dev-team".to_string()]),
         commands: Some(vec!["rapid-dev".to_string()]),
         skills: Some(vec!["rapid-dev-team".to_string()]),
+        command: None,
+        skill: None,
     };
     assert!(validate_manifest(&valid).is_ok());
 
     let invalid = TeamConfigManifest {
+        team: None,
         name: Some("Rogue Third Party Hacker Team".to_string()),
         version: Some("1.0".to_string()),
         description: None,
         agents: None,
         commands: None,
         skills: None,
+        command: None,
+        skill: None,
     };
     assert!(validate_manifest(&invalid).is_err());
 }
@@ -284,7 +290,7 @@ fn test_local_dir_install_and_rollback() {
 
     fs::write(
         src_dir.join("team.config.json"),
-        r#"{"name":"Rapid Dev Team","version":"1.0.0","agents":["rapid-dev-team"],"commands":["rapid-dev"]}"#,
+        r#"{"name":"Rapid Dev Team","version":"1.0.0","agents":["rapid-dev-team"],"commands":["rapid-dev"],"skills":["rapid-dev-team"]}"#,
     )
     .unwrap();
     fs::write(
@@ -385,7 +391,7 @@ fn test_local_dir_install_backup_preserves_relative_path() {
     fs::create_dir_all(src_dir.join("agents")).unwrap();
     fs::write(
         src_dir.join("team.config.json"),
-        r#"{"name":"Rapid Dev Team","version":"1.0.0"}"#,
+        r#"{"name":"Rapid Dev Team","version":"1.0.0","agents":["rapid-dev-team"],"commands":["rapid-dev"],"skills":["rapid-dev-team"]}"#,
     )
     .unwrap();
     fs::write(
@@ -482,7 +488,7 @@ fn test_zip_install_full_flow_with_prefix_and_backup() {
         &[
             (
                 "team.config.json",
-                r#"{"name":"Rapid Dev Team","version":"1.0.0","agents":["rapid-dev-team"],"commands":["rapid-dev"]}"#,
+                r#"{"name":"Rapid Dev Team","version":"1.0.0","agents":["rapid-dev-team"],"commands":["rapid-dev"],"skills":["rapid-dev-team"]}"#,
             ),
             (
                 "agents/rapid-dev-team.md",
@@ -583,7 +589,7 @@ fn test_zip_install_rollback_deletes_new_files_and_restores_overwritten() {
         &[
             (
                 "team.config.json",
-                r#"{"name":"Rapid Dev Team","version":"1.0.0"}"#,
+                r#"{"name":"Rapid Dev Team","version":"1.0.0","agents":["rapid-dev-team"],"commands":["rapid-dev"],"skills":["rapid-dev-team"]}"#,
             ),
             ("agents/rapid-dev-team.md", "---\nmodel: glm-4\n---\nNew"),
             ("commands/rapid-dev.md", "---\ndescription: c\n---\nCmd"),

@@ -74,6 +74,10 @@ pub fn is_allowed_download_url(url: &str) -> Result<(), String> {
         None => parsed,
     };
 
+    if host.contains('@') || host.contains(':') || host.is_empty() {
+        return Err("下载地址包含不允许的主机认证信息或端口".to_string());
+    }
+
     if !ALLOWED_HOSTS
         .iter()
         .any(|&h| host == h || host.ends_with(&format!(".{}", h)))
@@ -278,7 +282,7 @@ pub fn download_zip(
     target_file_path: &std::path::Path,
     proxy: Option<&ProxyConfig>,
 ) -> Result<(), String> {
-    is_allowed_download_url(url)?;
+    is_allowed_repo_url(url)?;
 
     let agent = create_agent(proxy)?;
     let resp = agent
