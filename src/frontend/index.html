@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rapid Agent Team Configurator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="brand-badge">⚡ Rapid Team</div>
+        <h1>Rapid Agent Team 配置中心</h1>
+      </div>
+      <div class="header-actions">
+        <div class="scope-toggle">
+          <label><input type="radio" name="scope" value="global" checked id="scope-global"> 全局配置</label>
+          <label><input type="radio" name="scope" value="project" id="scope-project"> 项目配置</label>
+        </div>
+        <button id="btn-select-project" class="btn btn-secondary btn-sm" style="display:none;">选择项目目录</button>
+        <button id="btn-refresh" class="btn btn-secondary btn-sm" title="重新扫描">🔄 刷新状态</button>
+      </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="app-main">
+      <!-- Status Banner -->
+      <section id="banner-section" class="banner-card">
+        <div class="banner-icon" id="banner-icon">🔍</div>
+        <div class="banner-content">
+          <div class="banner-title" id="banner-title">正在扫描 OpenCode 配置环境...</div>
+          <div class="banner-desc" id="banner-desc">读取全局与项目模型定义及 Rapid Team 9 成员安装状态</div>
+        </div>
+        <div class="banner-extra" id="banner-extra">
+          <button id="btn-install-wizard" class="btn btn-primary" style="display:none;">📦 一键安装 Rapid Team</button>
+        </div>
+      </section>
+
+      <!-- Tab navigation -->
+      <nav class="tabs-nav">
+        <button class="tab-btn active" data-tab="tab-config">⚙️ 9 成员模型配置</button>
+        <button class="tab-btn" data-tab="tab-install">📥 安装与更新向导</button>
+        <button class="tab-btn" data-tab="tab-network">🌐 代理与网络测试</button>
+      </nav>
+
+      <!-- Tab 1: Model Config -->
+      <div id="tab-config" class="tab-pane active">
+        <div class="pane-toolbar">
+          <div class="search-box">
+            <input type="text" id="model-filter-input" placeholder="🔍 快速搜索模型 (如 glm-4, deepseek, gpt-4o, claude...)" />
+          </div>
+          <div class="toolbar-actions">
+            <button id="btn-batch-apply-default" class="btn btn-secondary btn-sm" title="根据成员专长快速分配已注册模型">⚡ 智能预设匹配</button>
+            <button id="btn-preview-plan" class="btn btn-primary">📝 预览修改与生成 Diff</button>
+          </div>
+        </div>
+
+        <div class="team-grid" id="team-grid">
+          <!-- Cards dynamically injected -->
+        </div>
+      </div>
+
+      <!-- Tab 2: Install Wizard -->
+      <div id="tab-install" class="tab-pane">
+        <div class="install-card">
+          <h3>📦 Rapid Agent Team 资源安装</h3>
+          <p class="section-desc">包含 9 个专门协作 Agent、<code>/rapid-dev</code> 命令及相关 Prompt 体系。</p>
+          
+          <div class="install-options">
+            <div class="install-opt-box">
+              <h4>选项 A：从本地 ZIP 压缩包安装</h4>
+              <p>解压包含 <code>agents/</code>、<code>commands/</code> 的 release.zip，内置 Zip-Slip 安全防护。</p>
+              <button id="btn-install-zip" class="btn btn-secondary">📂 选择本地 ZIP 文件并安装</button>
+            </div>
+
+            <div class="install-opt-box">
+              <h4>选项 B：从本地 Git 仓库/文件夹安装</h4>
+              <p>从本地 Rapid Agent Team 源码目录快速同步复制到 OpenCode 目录。</p>
+              <button id="btn-install-dir" class="btn btn-secondary">📁 选择本地代码目录并安装</button>
+            </div>
+
+            <div class="install-opt-box">
+              <h4>选项 C：在线 GitHub Release 下载安装</h4>
+              <p>支持配置专属代理通道，一键抓取官方最新固定版本。</p>
+              <div class="release-info-box" id="release-info-box">
+                <span id="release-version-text">点击下方按钮获取最新版本信息</span>
+              </div>
+              <div class="btn-group">
+                <button id="btn-fetch-release" class="btn btn-secondary btn-sm">🔎 获取最新版本</button>
+                <button id="btn-download-install-release" class="btn btn-primary btn-sm" style="display:none;">🚀 下载并安装</button>
+                <button id="btn-copy-release-link" class="btn btn-secondary btn-sm" style="display:none;">📋 复制下载链接</button>
+                <a id="btn-open-release-page" href="#" target="_blank" class="btn btn-secondary btn-sm" style="display:none;">🌐 打开 Release 页面</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 3: Network & Proxy -->
+      <div id="tab-network" class="tab-pane">
+        <div class="network-card">
+          <h3>🌐 隔离网络代理设置</h3>
+          <p class="section-desc">代理仅用于本配置器的在线版本检查与安装包下载，不污染系统或全局环境变量。</p>
+
+          <div class="form-group">
+            <label><input type="checkbox" id="proxy-enabled" checked /> 启用网络代理</label>
+          </div>
+          <div class="form-group">
+            <label for="proxy-url">代理服务器地址 (HTTP / HTTPS / SOCKS5):</label>
+            <input type="text" id="proxy-url" class="form-input" value="http://127.0.0.1:7890" placeholder="例如: http://127.0.0.1:7890 或 socks5://127.0.0.1:10808" />
+          </div>
+
+          <div class="btn-group">
+            <button id="btn-test-proxy" class="btn btn-secondary">⚡ 测试 GitHub 连通性</button>
+            <button id="btn-save-proxy" class="btn btn-primary">💾 保存代理设置</button>
+          </div>
+
+          <div id="proxy-test-result" class="test-result-box" style="display:none;"></div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Diff & Apply Modal -->
+    <div id="diff-modal" class="modal-overlay" style="display:none;">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <h3>📝 配置变更预览 (Diff Preview)</h3>
+          <button id="btn-close-modal" class="btn-close">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="modal-meta-notice">
+            🛡️ <strong>安全保障</strong>：系统将在写入前自动将文件备份至 <code>.backups/</code>，仅精确修改 Frontmatter 的 <code>model:</code> 键，保留所有正文与提示词，采用临时文件原子替换，异常自动回滚。
+          </div>
+          <div id="diff-list" class="diff-list">
+            <!-- Diff cards injected -->
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-cancel-apply" class="btn btn-secondary">取消</button>
+          <button id="btn-confirm-apply" class="btn btn-success">✅ 确认并原子应用变更</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Alert / Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
