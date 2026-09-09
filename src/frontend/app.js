@@ -100,6 +100,30 @@ function showToast(message, type = 'info') {
   }, 4000);
 }
 
+// 模型搜索使用宽松模糊匹配：忽略常见分隔符，并允许关键词字符按顺序出现。
+function normalizeSearchText(value) {
+  return String(value || '').toLowerCase().replace(/[\s\/_().:-]+/g, '');
+}
+
+function fuzzyMatch(value, query) {
+  const target = normalizeSearchText(value);
+  const tokens = String(query || '')
+    .toLowerCase()
+    .split(/\s+/)
+    .map(normalizeSearchText)
+    .filter(Boolean);
+  return tokens.every(token => {
+    if (target.includes(token)) return true;
+    let cursor = 0;
+    for (const character of token) {
+      cursor = target.indexOf(character, cursor);
+      if (cursor === -1) return false;
+      cursor += 1;
+    }
+    return true;
+  });
+}
+
 // Initial Load
 window.addEventListener('DOMContentLoaded', async () => {
   setupEventHandlers();
@@ -339,9 +363,9 @@ function renderTeamGrid(scan) {
     const selectEl = card.querySelector('.model-select');
     const optionsEl = card.querySelector('.model-options');
     const updateOptions = () => {
-      const query = selectEl.value.trim().toLowerCase();
+      const query = selectEl.value.trim();
       optionsEl.querySelectorAll('.model-option').forEach(option => {
-        option.hidden = Boolean(query && !option.dataset.model.toLowerCase().includes(query));
+        option.hidden = Boolean(query && !fuzzyMatch(option.dataset.model, query));
       });
       optionsEl.classList.add('open');
     };
@@ -365,9 +389,9 @@ function renderTeamGrid(scan) {
 }
 
 function filterModelOptions(query) {
-  const q = query.trim().toLowerCase();
+  const q = query.trim();
   document.querySelectorAll('.agent-card').forEach(card => {
-    card.hidden = Boolean(q && !card.textContent.toLowerCase().includes(q));
+    card.hidden = Boolean(q && !fuzzyMatch(card.textContent, q));
   });
 }
 

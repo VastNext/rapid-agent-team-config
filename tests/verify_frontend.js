@@ -102,8 +102,8 @@ for (const id of jsButtonIds) {
 }
 
 console.log("=== 9. Checking model search / select filtering & dir-install confirmation parity ===");
-// 可搜索选择：原生 select 选项过滤
-if (!js.includes('model-filter-input') || !js.includes('filterModelOptions')) {
+// 可搜索选择：输入框 + 分隔符容错 + 字符顺序模糊匹配
+if (!js.includes('model-filter-input') || !js.includes('filterModelOptions') || !js.includes('fuzzyMatch') || !js.includes('normalizeSearchText') || !js.includes('split(/\\s+/)')) {
   console.error("Missing searchable model select (model-filter-input / filterModelOptions)!");
   process.exit(1);
 }
