@@ -26,6 +26,14 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Setup Node.js (for frontend checks)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Verify frontend (HTML/JS static checks)
+        run: node tests/verify_frontend.js
+
       - name: Install Linux Dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
@@ -37,6 +45,9 @@ jobs:
 
       - name: Run cargo fmt check
         run: cargo fmt -- --check
+
+      - name: Run cargo clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Run cargo check
         run: cargo check --verbose

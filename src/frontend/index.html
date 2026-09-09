@@ -91,6 +91,7 @@
                 <button id="btn-fetch-release" class="btn btn-secondary btn-sm">🔎 获取最新版本</button>
                 <button id="btn-download-install-release" class="btn btn-primary btn-sm" style="display:none;">🚀 下载并安装</button>
                 <button id="btn-copy-release-link" class="btn btn-secondary btn-sm" style="display:none;">📋 复制下载链接</button>
+                <button id="btn-copy-sha256-link" class="btn btn-secondary btn-sm" style="display:none;">🔑 复制 SHA-256 地址</button>
                 <a id="btn-open-release-page" href="#" target="_blank" class="btn btn-secondary btn-sm" style="display:none;">🌐 打开 Release 页面</a>
               </div>
             </div>
@@ -131,13 +132,15 @@
         </div>
         <div class="modal-body">
           <div class="modal-meta-notice">
-            🛡️ <strong>安全保障</strong>：系统将在写入前自动将文件备份至 <code>.backups/</code>，仅精确修改 Frontmatter 的 <code>model:</code> 键，保留所有正文与提示词，采用临时文件原子替换，异常自动回滚。
+            🛡️ <strong>安全保障</strong>：系统将在写入前自动将文件备份至 <code>.backups/</code>，仅精确修改 Frontmatter 的 <code>model:</code> 键，保留所有正文与提示词，采用临时文件原子替换，异常自动回滚。<br/>
+            <span id="modal-backup-plan" style="color:#60a5fa; margin-top:4px; display:inline-block;"></span>
           </div>
           <div id="diff-list" class="diff-list">
             <!-- Diff cards injected -->
           </div>
         </div>
         <div class="modal-footer">
+          <button id="btn-copy-diff" class="btn btn-secondary">📋 复制 Diff</button>
           <button id="btn-cancel-apply" class="btn btn-secondary">取消</button>
           <button id="btn-confirm-apply" class="btn btn-success">✅ 确认并原子应用变更</button>
         </div>

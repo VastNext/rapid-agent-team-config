@@ -25,6 +25,7 @@ dirs = "6"
 percent-encoding = "2"
 ureq = { version = "2.10", default-features = false, features = ["tls", "socks-proxy", "json"] }
 zip = { version = "2.2", default-features = false, features = ["deflate"] }
+sha2 = { version = "0.10", default-features = false }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 webview2-com = "0.35"

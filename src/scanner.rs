@@ -1,13 +1,14 @@
 //! Config & Environment Scanner
 //!
-//! Scans global OpenCode directories (`~/.config/opencode` or `$XDG_CONFIG_HOME/opencode`)
+//! Scans global OpenCode directories (`~/.config/opencode` or `$OPENCODE_CONFIG_DIR`)
 //! and optional project-level directories for `opencode.json`, `opencode.jsonc`,
 //! `agent/*.md`, and `agents/*.md`.
 //!
 //! Extracts:
 //! - Available Providers and their defined Models (strictly zero credentials extracted)
+//! - Agent bindings defined in opencode.json/jsonc (`agent: { ... }` / `agents: { ... }`)
 //! - Existing Agents and their current `model:` frontmatter
-//! - Rapid Dev Team installation status and health
+//! - Rapid Dev Team installation status and completeness
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -34,6 +35,8 @@ pub struct AgentStatus {
     pub mode: Option<String>, // "primary" or "subagent"
     pub description: Option<String>,
     pub mtime: u64, // For concurrency check
+    #[serde(default)]
+    pub content_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +58,7 @@ pub struct ScanResult {
     pub providers: Vec<String>,
     pub models: Vec<ModelOption>,
     pub agents: Vec<AgentStatus>,
+    pub config_agent_bindings: BTreeMap<String, String>, // agent_name -> model
     pub team_status: TeamInstallStatus,
     pub project_dir: Option<String>,
 }
@@ -71,52 +75,87 @@ pub const RAPID_TEAM_AGENTS: &[&str] = &[
     "rapid-architect",
 ];
 
+/// Resolves global OpenCode config directory with environment variable priority
 pub fn get_global_opencode_dir() -> PathBuf {
+    // 1. OPENCODE_CONFIG_DIR env
+    if let Ok(val) = std::env::var("OPENCODE_CONFIG_DIR") {
+        let p = PathBuf::from(val.trim());
+        if !p.as_os_str().is_empty() {
+            return p;
+        }
+    }
+
+    // 2. OPENCODE_CONFIG env (if points to file, take parent; if dir, take dir)
+    if let Ok(val) = std::env::var("OPENCODE_CONFIG") {
+        let p = PathBuf::from(val.trim());
+        if p.is_file() {
+            if let Some(parent) = p.parent() {
+                return parent.to_path_buf();
+            }
+        } else if !p.as_os_str().is_empty() {
+            return p;
+        }
+    }
+
+    // 3. User home ~/.config/opencode (Standard for OpenCode across Linux/macOS/Windows)
+    if let Some(home) = dirs::home_dir() {
+        let opencode = home.join(".config").join("opencode");
+        if opencode.exists() {
+            return opencode;
+        }
+    }
+
+    // 4. User config directory fallback (%APPDATA%\opencode on Windows, ~/.config/opencode on Linux)
     if let Some(config_dir) = dirs::config_dir() {
         let opencode = config_dir.join("opencode");
         if opencode.exists() {
             return opencode;
         }
     }
+
+    // 5. Default fallback to ~/.config/opencode
     if let Some(home) = dirs::home_dir() {
-        let opencode = home.join(".config").join("opencode");
-        if opencode.exists() {
-            return opencode;
-        }
-        return opencode;
+        return home.join(".config").join("opencode");
     }
+
     PathBuf::from(".config/opencode")
 }
 
 pub fn scan_environment(project_path: Option<&Path>, use_project: bool) -> ScanResult {
-    let (target_scope, base_dir) = if use_project && project_path.is_some() {
-        let p = project_path.unwrap();
-        let dot_opencode = p.join(".opencode");
-        if dot_opencode.exists() && dot_opencode.is_dir() {
-            ("project".to_string(), dot_opencode)
-        } else {
-            ("project".to_string(), p.to_path_buf())
+    let (target_scope, base_dir) = if use_project {
+        match project_path {
+            Some(p) => {
+                let dot_opencode = p.join(".opencode");
+                ("project".to_string(), dot_opencode)
+            }
+            None => ("global".to_string(), get_global_opencode_dir()),
         }
     } else {
         ("global".to_string(), get_global_opencode_dir())
     };
 
-    // 1. Locate config files (both in current base_dir and fallback global for provider definitions)
-    let jsonc_path = base_dir.join("opencode.jsonc");
-    let json_path = base_dir.join("opencode.json");
-    let config_file = if jsonc_path.exists() {
-        Some(jsonc_path)
-    } else if json_path.exists() {
-        Some(json_path)
-    } else {
-        None
-    };
-
+    // 1. Locate config files
     let mut config_files_to_read = Vec::new();
-    if let Some(ref cf) = config_file {
-        config_files_to_read.push(cf.clone());
-    }
+    let mut primary_config_path = None;
+
     if target_scope == "project" {
+        if let Some(p) = project_path {
+            let candidates = [
+                p.join(".opencode").join("opencode.jsonc"),
+                p.join(".opencode").join("opencode.json"),
+                p.join("opencode.jsonc"),
+                p.join("opencode.json"),
+            ];
+            for cand in &candidates {
+                if cand.exists() {
+                    if primary_config_path.is_none() {
+                        primary_config_path = Some(cand.clone());
+                    }
+                    config_files_to_read.push(cand.clone());
+                }
+            }
+        }
+        // Include global config as inherited fallback for providers/models
         let global_dir = get_global_opencode_dir();
         let g_jsonc = global_dir.join("opencode.jsonc");
         let g_json = global_dir.join("opencode.json");
@@ -125,16 +164,28 @@ pub fn scan_environment(project_path: Option<&Path>, use_project: bool) -> ScanR
         } else if g_json.exists() {
             config_files_to_read.push(g_json);
         }
+    } else {
+        let jsonc_path = base_dir.join("opencode.jsonc");
+        let json_path = base_dir.join("opencode.json");
+        if jsonc_path.exists() {
+            primary_config_path = Some(jsonc_path.clone());
+            config_files_to_read.push(jsonc_path);
+        } else if json_path.exists() {
+            primary_config_path = Some(json_path.clone());
+            config_files_to_read.push(json_path);
+        }
     }
 
-    // 2. Parse providers and models (NO SECRETS EXTRACTED)
+    // 2. Parse providers, models, and agent bindings (NO CREDENTIALS EXTRACTED)
     let mut models_map: BTreeMap<String, ModelOption> = BTreeMap::new();
     let mut providers_set: BTreeSet<String> = BTreeSet::new();
+    let mut config_agent_bindings: BTreeMap<String, String> = BTreeMap::new();
 
     for cf in &config_files_to_read {
         if let Ok(raw_content) = std::fs::read_to_string(cf) {
             let cleaned = strip_jsonc_comments_and_trailing_commas(&raw_content);
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&cleaned) {
+                // Read provider models
                 if let Some(prov_obj) = val.get("provider").and_then(|p| p.as_object()) {
                     for (prov_name, prov_val) in prov_obj {
                         providers_set.insert(prov_name.clone());
@@ -154,21 +205,52 @@ pub fn scan_environment(project_path: Option<&Path>, use_project: bool) -> ScanR
                         }
                     }
                 }
+
+                // Read agent bindings in opencode.json/jsonc (supports both "agent" and "agents")
+                for key in ["agent", "agents"] {
+                    if let Some(agent_obj) = val.get(key).and_then(|a| a.as_object()) {
+                        for (agent_k, agent_v) in agent_obj {
+                            if let Some(m) = agent_v.get("model").and_then(|m| m.as_str()) {
+                                if !m.trim().is_empty() {
+                                    config_agent_bindings
+                                        .entry(agent_k.clone())
+                                        .or_insert_with(|| m.trim().to_string());
+                                }
+                            } else if let Some(m_str) = agent_v.as_str() {
+                                if !m_str.trim().is_empty() {
+                                    config_agent_bindings
+                                        .entry(agent_k.clone())
+                                        .or_insert_with(|| m_str.trim().to_string());
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
-    // 3. Scan agents
-    let mut agent_dirs = vec![base_dir.join("agents"), base_dir.join("agent")];
-    if target_scope == "project" {
-        let global_dir = get_global_opencode_dir();
-        agent_dirs.push(global_dir.join("agents"));
-        agent_dirs.push(global_dir.join("agent"));
-    }
-
+    // 3. Scan agents (Project agents take precedence over Global agents)
     let mut found_agents: BTreeMap<String, AgentStatus> = BTreeMap::new();
 
-    for adir in agent_dirs {
+    let scan_dirs = if target_scope == "project" {
+        let p = project_path.unwrap_or_else(|| Path::new(""));
+        vec![
+            (p.join(".opencode").join("agents"), "project"),
+            (p.join(".opencode").join("agent"), "project"),
+            (p.join("agents"), "project"),
+            (p.join("agent"), "project"),
+            (get_global_opencode_dir().join("agents"), "global"),
+            (get_global_opencode_dir().join("agent"), "global"),
+        ]
+    } else {
+        vec![
+            (base_dir.join("agents"), "global"),
+            (base_dir.join("agent"), "global"),
+        ]
+    };
+
+    for (adir, src_label) in scan_dirs {
         if !adir.exists() || !adir.is_dir() {
             continue;
         }
@@ -184,10 +266,13 @@ pub fn scan_environment(project_path: Option<&Path>, use_project: bool) -> ScanR
                         continue;
                     }
                     if found_agents.contains_key(file_stem) {
-                        continue;
+                        continue; // Already found higher priority (project over global)
                     }
 
-                    let content = std::fs::read_to_string(&path).unwrap_or_default();
+                    let content_bytes = std::fs::read(&path).unwrap_or_default();
+                    let content_hash = crate::writer::compute_sha256_hex(&content_bytes);
+                    let content = String::from_utf8_lossy(&content_bytes);
+
                     let mtime = entry
                         .metadata()
                         .and_then(|m| m.modified())
@@ -198,12 +283,19 @@ pub fn scan_environment(project_path: Option<&Path>, use_project: bool) -> ScanR
                         })
                         .unwrap_or(0);
 
-                    let (current_model, mode, description) =
+                    let (mut current_model, mode, description) =
                         if let Some(fm) = parse_frontmatter(&content) {
                             (fm.model, fm.mode, fm.description)
                         } else {
                             (None, None, None)
                         };
+
+                    // Fallback to opencode.json agent binding if frontmatter doesn't specify model
+                    if current_model.is_none() {
+                        if let Some(cfg_model) = config_agent_bindings.get(file_stem) {
+                            current_model = Some(cfg_model.clone());
+                        }
+                    }
 
                     found_agents.insert(
                         file_stem.to_string(),
@@ -213,10 +305,11 @@ pub fn scan_environment(project_path: Option<&Path>, use_project: bool) -> ScanR
                             full_path: path.to_string_lossy().to_string(),
                             is_installed: true,
                             current_model,
-                            source: target_scope.clone(),
+                            source: src_label.to_string(),
                             mode,
                             description,
                             mtime,
+                            content_hash: Some(content_hash),
                         },
                     );
                 }
@@ -236,9 +329,19 @@ pub fn scan_environment(project_path: Option<&Path>, use_project: bool) -> ScanR
     }
 
     let command_file = base_dir.join("commands").join("rapid-dev.md");
-    let command_installed = command_file.exists();
+    let command_installed = command_file.exists()
+        || (target_scope == "project"
+            && get_global_opencode_dir()
+                .join("commands")
+                .join("rapid-dev.md")
+                .exists());
     let skill_dir = base_dir.join("skills").join("rapid-dev-team");
-    let skill_installed = skill_dir.exists();
+    let skill_installed = skill_dir.exists()
+        || (target_scope == "project"
+            && get_global_opencode_dir()
+                .join("skills")
+                .join("rapid-dev-team")
+                .exists());
 
     let is_installed_complete = missing_agents.is_empty() && command_installed && skill_installed;
     let is_installed_partial = installed_count > 0 || command_installed || skill_installed;
@@ -246,10 +349,11 @@ pub fn scan_environment(project_path: Option<&Path>, use_project: bool) -> ScanR
     ScanResult {
         target_scope,
         opencode_dir: base_dir.to_string_lossy().to_string(),
-        config_file_path: config_file.map(|p| p.to_string_lossy().to_string()),
+        config_file_path: primary_config_path.map(|p| p.to_string_lossy().to_string()),
         providers: providers_set.into_iter().collect(),
         models: models_map.into_values().collect(),
         agents: found_agents.into_values().collect(),
+        config_agent_bindings,
         team_status: TeamInstallStatus {
             is_installed_complete,
             is_installed_partial,

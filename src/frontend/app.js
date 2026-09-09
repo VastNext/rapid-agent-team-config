@@ -13,40 +13,84 @@ let appState = {
   latestRelease: null
 };
 
-// RPC invoker to Rust backend via wry ipc
-function callRust(action, payload = {}) {
-  return new Promise((resolve, reject) => {
-    const callbackId = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
-    
-    window[callbackId] = function(res) {
-      delete window[callbackId];
-      if (res.error) {
-        reject(new Error(res.error));
-      } else {
-        resolve(res.data);
-      }
-    };
+// Safe HTML escaping helper
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
-    const message = JSON.stringify({
-      action,
-      callbackId,
-      payload
-    });
-
-    if (window.ipc) {
-      window.ipc.postMessage(message);
+// Copy helper with robust error handling
+async function copyToClipboard(text, successMsg = '已复制到剪贴板') {
+  if (!text) return;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
     } else {
-      console.warn("IPC not available, running in mock/browser mode", action, payload);
-      // Fallback mock for browser preview
-      setTimeout(() => {
-        resolve({ mock: true });
-      }, 300);
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      const successful = document.execCommand('copy');
+      textArea.remove();
+      if (!successful) throw new Error('execCommand copy failed');
     }
-  });
+    showToast(successMsg, 'success');
+  } catch (err) {
+    showToast(`复制失败: ${err.message}`, 'error');
+  }
+}
+
+// Safe RPC invoker to Rust backend
+async function callRust(action, payload = {}) {
+  try {
+    const resp = await fetch('/api/ipc', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ action, payload })
+    });
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
+    }
+    const json = await resp.json();
+    if (json.error) {
+      throw new Error(json.error);
+    }
+    return json.data;
+  } catch (fetchErr) {
+    // Fallback to window.ipc if running under legacy IPC shim
+    if (window.ipc) {
+      return new Promise((resolve, reject) => {
+        const callbackId = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
+        window[callbackId] = function(res) {
+          delete window[callbackId];
+          if (res.error) {
+            reject(new Error(res.error));
+          } else {
+            resolve(res.data);
+          }
+        };
+        window.ipc.postMessage(JSON.stringify({ action, callbackId, payload }));
+      });
+    }
+    console.warn("IPC not available, running in mock/browser mode", action, payload);
+    return { mock: true };
+  }
 }
 
 function showToast(message, type = 'info') {
   const container = document.getElementById('toast-container');
+  if (!container) return;
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
   toast.textContent = message;
@@ -57,68 +101,105 @@ function showToast(message, type = 'info') {
 }
 
 // Initial Load
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
   setupEventHandlers();
+  await loadSavedAppConfig();
   refreshState();
 });
+
+async function loadSavedAppConfig() {
+  try {
+    const cfg = await callRust('get_app_config');
+    if (cfg && cfg.proxy) {
+      appState.proxyConfig = cfg.proxy;
+      const proxyEnabledEl = document.getElementById('proxy-enabled');
+      if (proxyEnabledEl) proxyEnabledEl.checked = cfg.proxy.enabled;
+      const proxyUrlEl = document.getElementById('proxy-url');
+      if (proxyUrlEl) proxyUrlEl.value = cfg.proxy.proxy_url || 'http://127.0.0.1:7890';
+    }
+  } catch (err) {
+    console.warn('Failed to load app config:', err);
+  }
+}
 
 function setupEventHandlers() {
   // Tabs
   document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', () => {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
       const tabId = btn.getAttribute('data-tab');
-      document.getElementById(tabId).classList.add('active');
+      const targetPane = document.getElementById(tabId);
+      if (targetPane) targetPane.classList.add('active');
     });
   });
 
   // Scope Toggle
-  document.getElementById('scope-global').addEventListener('change', () => {
-    appState.selectedScope = 'global';
-    document.getElementById('btn-select-project').style.display = 'none';
-    refreshState();
-  });
-  document.getElementById('scope-project').addEventListener('change', () => {
-    appState.selectedScope = 'project';
-    document.getElementById('btn-select-project').style.display = 'inline-flex';
-    if (!appState.projectPath) {
-      chooseProjectFolder();
-    } else {
+  const scopeGlobalEl = document.getElementById('scope-global');
+  if (scopeGlobalEl) {
+    scopeGlobalEl.addEventListener('change', () => {
+      appState.selectedScope = 'global';
+      const btnSelProj = document.getElementById('btn-select-project');
+      if (btnSelProj) btnSelProj.style.display = 'none';
       refreshState();
-    }
+    });
+  }
+
+  const scopeProjEl = document.getElementById('scope-project');
+  if (scopeProjEl) {
+    scopeProjEl.addEventListener('change', () => {
+      appState.selectedScope = 'project';
+      const btnSelProj = document.getElementById('btn-select-project');
+      if (btnSelProj) btnSelProj.style.display = 'inline-flex';
+      if (!appState.projectPath) {
+        chooseProjectFolder();
+      } else {
+        refreshState();
+      }
+    });
+  }
+
+  // Safe Button bindings
+  const safeBind = (id, event, handler) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(event, handler);
+  };
+
+  safeBind('btn-refresh', 'click', refreshState);
+  safeBind('btn-select-project', 'click', chooseProjectFolder);
+  safeBind('btn-install-wizard', 'click', () => {
+    const tabInstallBtn = document.querySelector('[data-tab="tab-install"]');
+    if (tabInstallBtn) tabInstallBtn.click();
   });
 
-  // Buttons
-  document.getElementById('btn-refresh').addEventListener('click', refreshState);
-  document.getElementById('btn-select-project').addEventListener('click', chooseProjectFolder);
-  document.getElementById('btn-install-wizard').addEventListener('click', () => {
-    document.querySelector('[data-tab="tab-install"]').click();
-  });
+  const filterInput = document.getElementById('model-filter-input');
+  if (filterInput) {
+    filterInput.addEventListener('input', (e) => {
+      filterModelOptions(e.target.value);
+    });
+  }
 
-  document.getElementById('model-filter-input').addEventListener('input', (e) => {
-    filterModelOptions(e.target.value);
-  });
-
-  document.getElementById('btn-batch-apply-default').addEventListener('click', autoMatchModels);
-  document.getElementById('btn-preview-plan').addEventListener('click', previewPlan);
+  safeBind('btn-batch-apply-default', 'click', autoMatchModels);
+  safeBind('btn-preview-plan', 'click', previewPlan);
 
   // Modal
-  document.getElementById('btn-close-modal').addEventListener('click', closeModal);
-  document.getElementById('btn-cancel-apply').addEventListener('click', closeModal);
-  document.getElementById('btn-confirm-apply').addEventListener('click', confirmApply);
+  safeBind('btn-close-modal', 'click', closeModal);
+  safeBind('btn-cancel-apply', 'click', closeModal);
+  safeBind('btn-confirm-apply', 'click', confirmApply);
+  safeBind('btn-copy-diff', 'click', copyCurrentDiff);
 
   // Install handlers
-  document.getElementById('btn-install-zip').addEventListener('click', installFromZip);
-  document.getElementById('btn-install-dir').addEventListener('click', installFromDir);
-  document.getElementById('btn-fetch-release').addEventListener('click', fetchRelease);
-  document.getElementById('btn-download-install-release').addEventListener('click', downloadAndInstallRelease);
-  document.getElementById('btn-copy-release-link').addEventListener('click', copyReleaseLink);
+  safeBind('btn-install-zip', 'click', installFromZip);
+  safeBind('btn-install-dir', 'click', installFromDir);
+  safeBind('btn-fetch-release', 'click', fetchRelease);
+  safeBind('btn-download-install-release', 'click', downloadAndInstallRelease);
+  safeBind('btn-copy-release-link', 'click', copyReleaseLink);
+  safeBind('btn-copy-sha256-link', 'click', copySha256Link);
 
   // Proxy
-  document.getElementById('btn-test-proxy').addEventListener('click', testProxy);
-  document.getElementById('btn-save-proxy').addEventListener('click', saveProxyConfig);
+  safeBind('btn-test-proxy', 'click', testProxy);
+  safeBind('btn-save-proxy', 'click', saveProxyConfig);
 }
 
 async function refreshState() {
@@ -155,9 +236,11 @@ function renderStatusBanner(scan) {
   const desc = document.getElementById('banner-desc');
   const btnWizard = document.getElementById('btn-install-wizard');
 
+  if (!banner || !icon || !title || !desc || !btnWizard) return;
+
   banner.className = 'banner-card';
 
-  if (!scan.team_status) return;
+  if (!scan || !scan.team_status) return;
 
   const st = scan.team_status;
   if (st.is_installed_complete) {
@@ -185,6 +268,7 @@ function renderStatusBanner(scan) {
 
 function renderTeamGrid(scan) {
   const container = document.getElementById('team-grid');
+  if (!container) return;
   container.innerHTML = '';
 
   const expectedAgents = [
@@ -194,36 +278,40 @@ function renderTeamGrid(scan) {
     { name: 'rapid-builder-glm-go', title: 'rapid-builder-glm-go (GLM Coding)', mode: 'subagent', desc: '基于 GLM Coding 优化实现者' },
     { name: 'rapid-builder-deepseek-go', title: 'rapid-builder-deepseek-go (DeepSeek Go)', mode: 'subagent', desc: '基于 DeepSeek 模型的高并发快速实现' },
     { name: 'rapid-builder-deepseek-sensenova', title: 'rapid-builder-deepseek-sensenova (商汤日日新)', mode: 'subagent', desc: '基于 SenseNova 体系的构建与优化' },
-    { name: 'rapid-ui', title: 'rapid-ui (前端视觉与交互)', mode: 'subagent', desc: '负责页面 HTML/CSS/JS、设计系统与截图验证' },
+    { name: 'rapid-ui', title: 'rapid-ui (前端视觉与交互)', mode: 'subagent', desc: '负责页面 HTML/CSS/JS、设计系统与技术验证' },
     { name: 'rapid-reviewer', title: 'rapid-reviewer (代码评审与质检)', mode: 'subagent', desc: '严格检查代码规范、安全、性能与测试' },
     { name: 'rapid-architect', title: 'rapid-architect (架构设计与方案)', mode: 'subagent', desc: '负责方案设计、模块解耦与架构把关' }
   ];
 
   const agentMap = {};
-  scan.agents.forEach(a => { agentMap[a.name] = a; });
+  if (scan && scan.agents) {
+    scan.agents.forEach(a => { agentMap[a.name] = a; });
+  }
 
   expectedAgents.forEach(exp => {
     const existing = agentMap[exp.name];
     const card = document.createElement('div');
     card.className = 'agent-card';
 
-    const isInstalled = !!existing;
     const currentModel = existing ? (existing.current_model || '(未指定)') : '(未安装)';
     const selectedModel = appState.selectedModels[exp.name] || (existing ? existing.current_model || '' : '');
+    const sourceLabel = existing ? (existing.source === 'project' ? ' [项目]' : ' [全局]') : '';
 
     // Group models by provider
     const modelsByProvider = {};
-    scan.models.forEach(m => {
-      if (!modelsByProvider[m.provider]) modelsByProvider[m.provider] = [];
-      modelsByProvider[m.provider].push(m);
-    });
+    if (scan && scan.models) {
+      scan.models.forEach(m => {
+        if (!modelsByProvider[m.provider]) modelsByProvider[m.provider] = [];
+        modelsByProvider[m.provider].push(m);
+      });
+    }
 
     let selectOptions = `<option value="">-- 选择或输入模型 --</option>`;
     for (const [provider, list] of Object.entries(modelsByProvider)) {
-      selectOptions += `<optgroup label="Provider: ${provider}">`;
+      selectOptions += `<optgroup label="Provider: ${escapeHtml(provider)}">`;
       list.forEach(m => {
         const isSel = m.id === selectedModel ? 'selected' : '';
-        selectOptions += `<option value="${m.id}" ${isSel}>${m.id}</option>`;
+        selectOptions += `<option value="${escapeHtml(m.id)}" ${isSel}>${escapeHtml(m.id)}</option>`;
       });
       selectOptions += `</optgroup>`;
     }
@@ -231,27 +319,29 @@ function renderTeamGrid(scan) {
     card.innerHTML = `
       <div class="agent-card-header">
         <div class="agent-title-box">
-          <h3>${exp.title}</h3>
+          <h3>${escapeHtml(exp.title)}</h3>
           <div class="agent-meta">
-            <span>当前模型: <strong style="color:#60a5fa">${currentModel}</strong></span>
-            <span class="path">${existing ? existing.full_path : '(尚未创建文件)'}</span>
+            <span>当前模型: <strong style="color:#60a5fa">${escapeHtml(currentModel)}</strong>${escapeHtml(sourceLabel)}</span>
+            <span class="path">${escapeHtml(existing ? existing.full_path : '(尚未创建文件)')}</span>
           </div>
         </div>
-        <span class="agent-badge ${exp.mode === 'primary' ? 'primary' : ''}">${exp.mode}</span>
+        <span class="agent-badge ${exp.mode === 'primary' ? 'primary' : ''}">${escapeHtml(exp.mode)}</span>
       </div>
-      <p style="font-size:12px; color:var(--text-muted);">${exp.desc}</p>
+      <p style="font-size:12px; color:var(--text-muted);">${escapeHtml(exp.desc)}</p>
       <div class="model-selector-row">
         <label>设定/分配模型:</label>
-        <select class="model-select" data-agent="${exp.name}">
+        <select class="model-select" data-agent="${escapeHtml(exp.name)}">
           ${selectOptions}
         </select>
       </div>
     `;
 
     const selectEl = card.querySelector('.model-select');
-    selectEl.addEventListener('change', (e) => {
-      appState.selectedModels[exp.name] = e.target.value;
-    });
+    if (selectEl) {
+      selectEl.addEventListener('change', (e) => {
+        appState.selectedModels[exp.name] = e.target.value.trim();
+      });
+    }
 
     container.appendChild(card);
   });
@@ -308,32 +398,49 @@ function autoMatchModels() {
 async function previewPlan() {
   if (!appState.scanResult) return;
 
-  const items = [];
+  const realChangeItems = [];
   const agentMap = {};
-  appState.scanResult.agents.forEach(a => { agentMap[a.name] = a; });
+  if (appState.scanResult.agents) {
+    appState.scanResult.agents.forEach(a => { agentMap[a.name] = a; });
+  }
 
-  for (const [agentName, newModel] of Object.entries(appState.selectedModels)) {
+  for (const [agentName, newModelRaw] of Object.entries(appState.selectedModels)) {
+    const newModel = (newModelRaw || '').trim();
+    if (!newModel) continue;
+
     const existing = agentMap[agentName];
     if (existing) {
-      items.push({
-        agent_name: agentName,
-        file_path: existing.full_path,
-        original_model: existing.current_model || null,
-        new_model: newModel,
-        expected_mtime: existing.mtime
-      });
+      const orig = (existing.current_model || '').trim();
+      if (orig !== newModel) {
+        realChangeItems.push({
+          agent_name: agentName,
+          file_path: existing.full_path,
+          original_model: existing.current_model || null,
+          new_model: newModel,
+          expected_mtime: existing.mtime,
+          expected_hash: existing.content_hash || null
+        });
+      }
     }
   }
 
-  try {
-    const plan = await callRust('generate_change_plan', { items });
-    appState.currentPlan = { plan, items };
+  if (realChangeItems.length === 0) {
+    showToast('当前没有检测到任何模型配置变更', 'info');
+    return;
+  }
 
-    if (!plan.has_changes) {
-      showToast('当前没有检测到任何模型配置变更', 'info');
+  try {
+    const plan = await callRust('generate_change_plan', {
+      base_opencode_dir: appState.scanResult.opencode_dir,
+      items: realChangeItems
+    });
+
+    if (!plan.has_changes || plan.changes.length === 0) {
+      showToast('当前没有检测到任何实际变更', 'info');
       return;
     }
 
+    appState.currentPlan = { plan, items: realChangeItems };
     renderDiffModal(plan);
   } catch (err) {
     showToast(`生成变更计划失败: ${err.message}`, 'error');
@@ -342,40 +449,79 @@ async function previewPlan() {
 
 function renderDiffModal(plan) {
   const list = document.getElementById('diff-list');
+  if (!list) return;
   list.innerHTML = '';
+
+  const backupNotice = document.getElementById('modal-backup-plan');
+  if (backupNotice) {
+    backupNotice.textContent = `备份计划目录: ${plan.planned_backup_dir} (将完整保留相对路径)`;
+  }
 
   plan.changes.forEach(c => {
     const item = document.createElement('div');
     item.className = 'diff-card';
     item.innerHTML = `
       <div class="diff-card-header">
-        <span>🤖 ${c.agent_name} (<code style="color:#94a3b8">${c.file_name}</code>)</span>
-        <span style="color:#10b981">→ ${c.new_model}</span>
+        <span>🤖 ${escapeHtml(c.agent_name)} (<code style="color:#94a3b8">${escapeHtml(c.file_name)}</code>)</span>
+        <span style="color:#10b981">→ ${escapeHtml(c.new_model)}</span>
       </div>
-      <div class="diff-code">${c.diff_preview}</div>
+      <div style="font-size:11px; color:#64748b; margin-bottom:4px;">
+        完整路径: <code>${escapeHtml(c.file_path)}</code> | 相对备份: <code>${escapeHtml(c.backup_rel_path)}</code>
+      </div>
+      <div class="diff-code">${escapeHtml(c.diff_preview)}</div>
     `;
     list.appendChild(item);
   });
 
-  document.getElementById('diff-modal').style.display = 'flex';
+  const modal = document.getElementById('diff-modal');
+  if (modal) modal.style.display = 'flex';
+}
+
+function copyCurrentDiff() {
+  if (!appState.currentPlan || !appState.currentPlan.plan) {
+    showToast('无可用 Diff 数据', 'warning');
+    return;
+  }
+  const { plan } = appState.currentPlan;
+  let formatted = `# Rapid Agent Team Model Changes Plan\nBackup Directory: ${plan.planned_backup_dir}\n\n`;
+  plan.changes.forEach(c => {
+    formatted += `## Agent: ${c.agent_name} (${c.file_name})\n`;
+    formatted += `Path: ${c.file_path}\n`;
+    formatted += `Target Model: ${c.new_model}\n`;
+    formatted += `\`\`\`diff\n${c.diff_preview}\n\`\`\`\n\n`;
+  });
+  copyToClipboard(formatted, '已复制 Diff 完整内容到剪贴板');
 }
 
 function closeModal() {
-  document.getElementById('diff-modal').style.display = 'none';
+  const modal = document.getElementById('diff-modal');
+  if (modal) modal.style.display = 'none';
 }
 
 async function confirmApply() {
-  if (!appState.currentPlan) return;
+  if (!appState.currentPlan || !appState.currentPlan.items || appState.currentPlan.items.length === 0) {
+    showToast('没有可应用的有效变更', 'warning');
+    closeModal();
+    return;
+  }
+
   const { items } = appState.currentPlan;
+  const sanitizedItems = items.filter(it => it.new_model && it.new_model.trim().length > 0);
+  if (sanitizedItems.length === 0) {
+    showToast('变更列表为空', 'warning');
+    closeModal();
+    return;
+  }
 
   try {
     const res = await callRust('apply_model_changes', {
       base_opencode_dir: appState.scanResult.opencode_dir,
-      items
+      items: sanitizedItems
     });
 
     closeModal();
     showToast(res.message, 'success');
+    appState.currentPlan = null;
     refreshState();
   } catch (err) {
     showToast(`应用修改失败: ${err.message}`, 'error');
@@ -387,6 +533,16 @@ async function installFromZip() {
   try {
     const zipPath = await callRust('select_file', { filter_ext: 'zip' });
     if (!zipPath) return;
+
+    const plan = await callRust('generate_zip_install_plan', {
+      zip_path: zipPath,
+      target_opencode_dir: appState.scanResult.opencode_dir
+    });
+
+    const confirmMsg = `准备安装 Rapid Dev Team (${plan.total_files} 个文件，将覆盖 ${plan.overwrite_count} 个现有文件并自动备份)。确认继续？`;
+    if (!confirm(confirmMsg)) {
+      return;
+    }
 
     const res = await callRust('install_from_zip', {
       zip_path: zipPath,
@@ -405,6 +561,14 @@ async function installFromDir() {
     const dirPath = await callRust('select_folder');
     if (!dirPath) return;
 
+    // 与 ZIP 流程保持一致：安装前展示确认。install_from_local_dir 会先完整校验
+    // team.config.json（名称/版本/rapid-* 清单），非 Rapid Team 包会直接报错，不会静默跳过。
+    const confirmMsg = `将从本地文件夹安装 Rapid Dev Team：\n\n${escapeHtml(dirPath)}\n\n` +
+      `安装前会自动校验 team.config.json 清单；已存在的目标文件将自动备份，异常时事务回滚。确认继续？`;
+    if (!confirm(confirmMsg)) {
+      return;
+    }
+
     const res = await callRust('install_from_local_dir', {
       source_dir: dirPath,
       target_opencode_dir: appState.scanResult.opencode_dir
@@ -418,28 +582,45 @@ async function installFromDir() {
 }
 
 async function fetchRelease() {
+  const infoBox = document.getElementById('release-info-box');
   try {
     showToast('正在获取 GitHub 最新版本...', 'info');
     const proxy = getProxyConfig();
     const rel = await callRust('fetch_latest_release', {
-      repo: 'VastNext/rapid-agent-team-config',
+      repo: 'VastNext/opencode-rapid-agent-team',
       proxy
     });
     appState.latestRelease = rel;
 
-    document.getElementById('release-version-text').innerHTML = `
-      最新版本: <strong>${rel.tag_name}</strong> (${rel.name})<br/>
-      直链: <span style="color:#60a5fa">${rel.direct_asset_url || rel.zipball_url}</span>
-    `;
+    if (infoBox) {
+      infoBox.innerHTML = `
+        最新版本: <strong>${escapeHtml(rel.tag_name)}</strong> (${escapeHtml(rel.name)})<br/>
+        所属仓库: <code>${escapeHtml(rel.repo)}</code> | 平台: <code>${escapeHtml(rel.current_platform)}</code><br/>
+        ${rel.has_platform_asset ? `专属直链: <span style="color:#60a5fa">${escapeHtml(rel.direct_asset_name || rel.direct_asset_url)}</span>` : '<span style="color:#f59e0b">已匹配官方源码/Release压缩包</span>'}
+      `;
+    }
 
-    document.getElementById('btn-download-install-release').style.display = 'inline-flex';
-    document.getElementById('btn-copy-release-link').style.display = 'inline-flex';
+    const btnDownload = document.getElementById('btn-download-install-release');
+    if (btnDownload) btnDownload.style.display = 'inline-flex';
+    const btnCopyRel = document.getElementById('btn-copy-release-link');
+    if (btnCopyRel) btnCopyRel.style.display = 'inline-flex';
+    const btnCopySha = document.getElementById('btn-copy-sha256-link');
+    if (btnCopySha) btnCopySha.style.display = rel.sha256_url ? 'inline-flex' : 'none';
+
     const pageBtn = document.getElementById('btn-open-release-page');
-    pageBtn.style.display = 'inline-flex';
-    pageBtn.href = rel.html_url;
+    if (pageBtn) {
+      pageBtn.style.display = 'inline-flex';
+      pageBtn.href = rel.html_url.startsWith('https://') ? rel.html_url : '#';
+    }
 
     showToast(`获取到最新版本: ${rel.tag_name}`, 'success');
   } catch (err) {
+    if (infoBox) {
+      infoBox.innerHTML = `
+        <span style="color:#ef4444">❌ 在线获取失败: ${escapeHtml(err.message)}</span><br/>
+        <span style="color:var(--text-muted); font-size:12px;">提示：可在左侧使用「选项 A：从本地 ZIP 安装」或「选项 B：从本地文件夹安装」直接部署。</span>
+      `;
+    }
     showToast(`获取 Release 失败: ${err.message}`, 'error');
   }
 }
@@ -459,6 +640,10 @@ async function downloadAndInstallRelease() {
     showToast(res.message, 'success');
     refreshState();
   } catch (err) {
+    const infoBox = document.getElementById('release-info-box');
+    if (infoBox) {
+      infoBox.innerHTML += `<br/><span style="color:#ef4444; font-size:12px;">⚠️ 下载失败: ${escapeHtml(err.message)}。请尝试使用本地 ZIP 安装或配置代理。</span>`;
+    }
     showToast(`下载安装失败: ${err.message}`, 'error');
   }
 }
@@ -466,20 +651,27 @@ async function downloadAndInstallRelease() {
 function copyReleaseLink() {
   if (!appState.latestRelease) return;
   const url = appState.latestRelease.direct_asset_url || appState.latestRelease.zipball_url;
-  navigator.clipboard.writeText(url);
-  showToast('已复制下载直链到剪贴板', 'success');
+  copyToClipboard(url, '已复制下载直链到剪贴板');
+}
+
+function copySha256Link() {
+  if (!appState.latestRelease || !appState.latestRelease.sha256_url) return;
+  copyToClipboard(appState.latestRelease.sha256_url, '已复制 SHA-256 校验文件地址');
 }
 
 // Proxy
 function getProxyConfig() {
-  const enabled = document.getElementById('proxy-enabled').checked;
-  const proxy_url = document.getElementById('proxy-url').value.trim();
+  const enabledEl = document.getElementById('proxy-enabled');
+  const enabled = enabledEl ? enabledEl.checked : true;
+  const urlEl = document.getElementById('proxy-url');
+  const proxy_url = urlEl ? urlEl.value.trim() : 'http://127.0.0.1:7890';
   return { enabled, proxy_url };
 }
 
 async function testProxy() {
   const proxy = getProxyConfig();
   const box = document.getElementById('proxy-test-result');
+  if (!box) return;
   box.style.display = 'block';
   box.style.color = 'var(--text-muted)';
   box.textContent = '正在测试 GitHub 连通性...';
@@ -499,7 +691,13 @@ async function testProxy() {
   }
 }
 
-function saveProxyConfig() {
-  appState.proxyConfig = getProxyConfig();
-  showToast('代理配置已在应用局部生效', 'success');
+async function saveProxyConfig() {
+  const proxy = getProxyConfig();
+  appState.proxyConfig = proxy;
+  try {
+    await callRust('save_app_config', { proxy });
+    showToast('代理设置已持久化保存至应用配置', 'success');
+  } catch (err) {
+    showToast(`保存代理设置失败: ${err.message}`, 'error');
+  }
 }

@@ -10,6 +10,7 @@ mod scanner;
 mod writer;
 
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use tao::{
     dpi::LogicalSize,
@@ -22,8 +23,7 @@ use wry::{http::Response, WebViewBuilder};
 #[derive(Debug, Deserialize)]
 struct IpcMessage {
     action: String,
-    #[serde(rename = "callbackId")]
-    callback_id: String,
+    #[serde(default)]
     payload: serde_json::Value,
 }
 
@@ -33,12 +33,80 @@ struct IpcResponse<T: Serialize> {
     error: Option<String>,
 }
 
-fn handle_ipc_request(msg: IpcMessage) -> String {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AppConfig {
+    proxy: Option<network::ProxyConfig>,
+}
+
+const ALLOWED_ACTIONS: &[&str] = &[
+    "get_app_config",
+    "save_app_config",
+    "scan_environment",
+    "select_folder",
+    "select_file",
+    "generate_change_plan",
+    "apply_model_changes",
+    "generate_zip_install_plan",
+    "install_from_zip",
+    "install_from_local_dir",
+    "test_proxy_connection",
+    "fetch_latest_release",
+    "download_and_install_release",
+];
+
+fn get_app_config_path() -> PathBuf {
+    if let Some(config_dir) = dirs::config_dir() {
+        let app_dir = config_dir.join("rapid-agent-team-config");
+        let _ = std::fs::create_dir_all(&app_dir);
+        return app_dir.join("config.json");
+    }
+    PathBuf::from("rapid_app_config.json")
+}
+
+fn load_app_config() -> AppConfig {
+    let p = get_app_config_path();
+    if let Ok(content) = std::fs::read_to_string(p) {
+        if let Ok(cfg) = serde_json::from_str::<AppConfig>(&content) {
+            return cfg;
+        }
+    }
+    AppConfig { proxy: None }
+}
+
+fn save_app_config(cfg: &AppConfig) -> Result<(), String> {
+    let p = get_app_config_path();
+    if let Some(parent) = p.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let json_str = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
+    std::fs::write(p, json_str).map_err(|e| format!("保存配置失败: {}", e))
+}
+
+fn handle_ipc_request(msg: IpcMessage) -> IpcResponse<serde_json::Value> {
     let action = msg.action.as_str();
-    let callback_id = msg.callback_id;
+    if !ALLOWED_ACTIONS.contains(&action) {
+        return IpcResponse {
+            data: None,
+            error: Some(format!("未受许可的 IPC 请求操作: {}", action)),
+        };
+    }
     let payload = msg.payload;
 
     let (data, error) = match action {
+        "get_app_config" => {
+            let cfg = load_app_config();
+            (serde_json::to_value(cfg).ok(), None)
+        }
+        "save_app_config" => {
+            if let Ok(cfg) = serde_json::from_value::<AppConfig>(payload) {
+                match save_app_config(&cfg) {
+                    Ok(_) => (serde_json::to_value(true).ok(), None),
+                    Err(e) => (None, Some(e)),
+                }
+            } else {
+                (None, Some("无效的配置参数".to_string()))
+            }
+        }
         "scan_environment" => {
             let project_path_str = payload.get("project_path").and_then(|p| p.as_str());
             let use_project = payload
@@ -66,10 +134,14 @@ fn handle_ipc_request(msg: IpcMessage) -> String {
             (serde_json::to_value(path_str).ok(), None)
         }
         "generate_change_plan" => {
+            let base_dir_str = payload
+                .get("base_opencode_dir")
+                .and_then(|d| d.as_str())
+                .unwrap_or("");
             if let Ok(items) = serde_json::from_value::<Vec<writer::ModelChangeItem>>(
                 payload.get("items").cloned().unwrap_or_default(),
             ) {
-                let plan = writer::generate_change_plan(&items);
+                let plan = writer::generate_change_plan(Path::new(base_dir_str), &items);
                 (serde_json::to_value(plan).ok(), None)
             } else {
                 (None, Some("无效的请求变更参数".to_string()))
@@ -89,6 +161,20 @@ fn handle_ipc_request(msg: IpcMessage) -> String {
                 }
             } else {
                 (None, Some("变更参数解析失败".to_string()))
+            }
+        }
+        "generate_zip_install_plan" => {
+            let zip_path = payload
+                .get("zip_path")
+                .and_then(|p| p.as_str())
+                .unwrap_or("");
+            let target_dir = payload
+                .get("target_opencode_dir")
+                .and_then(|p| p.as_str())
+                .unwrap_or("");
+            match installer::generate_zip_install_plan(Path::new(zip_path), Path::new(target_dir)) {
+                Ok(res) => (serde_json::to_value(res).ok(), None),
+                Err(e) => (None, Some(e)),
             }
         }
         "install_from_zip" => {
@@ -129,14 +215,11 @@ fn handle_ipc_request(msg: IpcMessage) -> String {
             (serde_json::to_value(res).ok(), None)
         }
         "fetch_latest_release" => {
-            let repo = payload
-                .get("repo")
-                .and_then(|r| r.as_str())
-                .unwrap_or("VastNext/rapid-agent-team-config");
+            let repo_opt = payload.get("repo").and_then(|r| r.as_str());
             let proxy_cfg = payload
                 .get("proxy")
                 .and_then(|p| serde_json::from_value::<network::ProxyConfig>(p.clone()).ok());
-            match network::fetch_latest_release(repo, proxy_cfg.as_ref()) {
+            match network::fetch_latest_release(repo_opt, proxy_cfg.as_ref()) {
                 Ok(res) => (serde_json::to_value(res).ok(), None),
                 Err(e) => (None, Some(e)),
             }
@@ -151,7 +234,20 @@ fn handle_ipc_request(msg: IpcMessage) -> String {
                 .get("proxy")
                 .and_then(|p| serde_json::from_value::<network::ProxyConfig>(p.clone()).ok());
 
-            let temp_zip = std::env::temp_dir().join("rapid_release_download.zip");
+            // 强制校验下载地址必须属于官方 Rapid Agent Team 仓库白名单
+            if let Err(e) = network::is_allowed_repo_url(url) {
+                return IpcResponse {
+                    data: None,
+                    error: Some(e),
+                };
+            }
+
+            let unique_id = std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let temp_zip = std::env::temp_dir().join(format!("rapid_release_{}.zip", unique_id));
+
             match network::download_zip(url, &temp_zip, proxy_cfg.as_ref()) {
                 Ok(_) => {
                     let install_res = installer::install_from_zip(&temp_zip, Path::new(target_dir));
@@ -161,15 +257,16 @@ fn handle_ipc_request(msg: IpcMessage) -> String {
                         Err(e) => (None, Some(e)),
                     }
                 }
-                Err(e) => (None, Some(e)),
+                Err(e) => {
+                    let _ = std::fs::remove_file(&temp_zip);
+                    (None, Some(e))
+                }
             }
         }
-        _ => (None, Some(format!("Unknown action: {}", action))),
+        _ => (None, Some(format!("未识别的请求操作: {}", action))),
     };
 
-    let resp = IpcResponse { data, error };
-    let json_resp = serde_json::to_string(&resp).unwrap_or_else(|_| "{}".to_string());
-    format!("window['{}']({});", callback_id, json_resp)
+    IpcResponse { data, error }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -180,41 +277,69 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_min_inner_size(LogicalSize::new(800.0, 560.0))
         .build(&event_loop)?;
 
-    // Embedded assets
     let html_content = include_str!("frontend/index.html");
     let css_content = include_str!("frontend/style.css");
     let js_content = include_str!("frontend/app.js");
 
-    let _webview = WebViewBuilder::new(&window)
+    let builder = WebViewBuilder::new()
         .with_custom_protocol("app".into(), move |_webview_id, request| {
             let path = request.uri().path();
             match path {
                 "/" | "/index.html" => Response::builder()
                     .header("Content-Type", "text/html; charset=utf-8")
-                    .body(html_content.as_bytes().into())
-                    .map_err(Into::into),
+                    .body(Cow::Borrowed(html_content.as_bytes()))
+                    .unwrap(),
                 "/style.css" => Response::builder()
                     .header("Content-Type", "text/css; charset=utf-8")
-                    .body(css_content.as_bytes().into())
-                    .map_err(Into::into),
+                    .body(Cow::Borrowed(css_content.as_bytes()))
+                    .unwrap(),
                 "/app.js" => Response::builder()
                     .header("Content-Type", "application/javascript; charset=utf-8")
-                    .body(js_content.as_bytes().into())
-                    .map_err(Into::into),
+                    .body(Cow::Borrowed(js_content.as_bytes()))
+                    .unwrap(),
+                "/api/ipc" => {
+                    let req_body = request.body();
+                    let resp_obj = match serde_json::from_slice::<IpcMessage>(req_body) {
+                        Ok(msg) => handle_ipc_request(msg),
+                        Err(e) => IpcResponse {
+                            data: None,
+                            error: Some(format!("IPC JSON 解析错误: {}", e)),
+                        },
+                    };
+                    let resp_bytes = serde_json::to_vec(&resp_obj).unwrap_or_default();
+                    Response::builder()
+                        .header("Content-Type", "application/json; charset=utf-8")
+                        .body(Cow::Owned(resp_bytes))
+                        .unwrap()
+                }
                 _ => Response::builder()
                     .status(404)
-                    .body("Not Found".as_bytes().into())
-                    .map_err(Into::into),
+                    .body(Cow::Borrowed(&b"Not Found"[..]))
+                    .unwrap(),
             }
         })
-        .with_ipc_handler(|webview, msg| {
-            if let Ok(req) = serde_json::from_str::<IpcMessage>(&msg) {
-                let js_cb = handle_ipc_request(req);
-                let _ = webview.evaluate_script(&js_cb);
-            }
-        })
-        .with_url("app://localhost/index.html")
-        .build()?;
+        .with_url("app://localhost/index.html");
+
+    #[cfg(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "android"
+    ))]
+    let _webview = builder.build(&window)?;
+
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "android"
+    )))]
+    let _webview = {
+        use tao::platform::unix::WindowExtUnix;
+        use wry::WebViewBuilderExtUnix;
+        let vbox = window.default_vbox().unwrap();
+        builder.build_gtk(vbox)?
+    };
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
