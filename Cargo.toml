@@ -1,6 +1,6 @@
 [package]
 name = "rapid-agent-team-config"
-version = "0.1.0"
+version = "0.1.3"
 edition = "2021"
 description = "Cross-platform GUI configuration and installation wizard for Rapid Agent Team in OpenCode"
 authors = ["VastNext"]

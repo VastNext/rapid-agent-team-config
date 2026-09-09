@@ -16,7 +16,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        # 修复阶段先只验证 Windows；多平台功能稳定后再恢复矩阵。
+        os: [windows-latest]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

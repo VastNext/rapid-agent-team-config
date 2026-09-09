@@ -81,6 +81,7 @@ for (const block of innerHtmlBlocks) {
     const expr = interp.slice(2, -1);
     const isSafe = /escapeHtml\(/.test(expr) ||
       /^(has_platform_asset|isSel|selectOptions|'selected'|''|selectedModel|models\.length)$/.test(expr.trim()) ||
+      /^selectOptions\s*\|\|/.test(expr.trim()) ||
       /^\d+$/.test(expr.trim()) ||
       // 三元表达式：仅当两个分支都是字面量字符串/空串时才安全
       (/^\s*[^?]+\?\s*('[^']*'|"")\s*:\s*('[^']*'|"")\s*$/.test(expr));

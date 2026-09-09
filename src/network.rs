@@ -232,6 +232,10 @@ pub fn fetch_latest_release(
         ))
         .to_string();
 
+    if is_allowed_repo_url(&zipball_url).is_err() {
+        return Err("GitHub Release 返回了不受信任的源码包地址".to_string());
+    }
+
     let (_platform_os, platform_keyword) = get_current_platform_keyword();
     let mut direct_asset_url = None;
     let mut direct_asset_name = None;
@@ -245,7 +249,9 @@ pub fn fetch_latest_release(
                 .and_then(|u| u.as_str())
                 .unwrap_or("");
 
-            if asset_name.ends_with(".sha256") || asset_name.ends_with(".sha256.txt") {
+            if (asset_name.ends_with(".sha256") || asset_name.ends_with(".sha256.txt"))
+                && is_allowed_repo_url(download_url).is_ok()
+            {
                 sha256_url = Some(download_url.to_string());
             }
 
@@ -254,6 +260,7 @@ pub fn fetch_latest_release(
                 || asset_name.ends_with(".zip")
                 || asset_name.contains("rapid-agent-team"))
                 && direct_asset_url.is_none()
+                && is_allowed_repo_url(download_url).is_ok()
             {
                 direct_asset_url = Some(download_url.to_string());
                 direct_asset_name = Some(asset_name.to_string());

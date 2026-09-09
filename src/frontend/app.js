@@ -306,12 +306,12 @@ function renderTeamGrid(scan) {
       });
     }
 
-    let selectOptions = `<option value="">-- 选择或输入模型 --</option>`;
+    let selectOptions = '';
     for (const [provider, list] of Object.entries(modelsByProvider)) {
       selectOptions += `<optgroup label="Provider: ${escapeHtml(provider)}">`;
       list.forEach(m => {
         const isSel = m.id === selectedModel ? 'selected' : '';
-        selectOptions += `<option value="${escapeHtml(m.id)}" ${isSel}>${escapeHtml(m.id)}</option>`;
+        selectOptions += `<button type="button" class="model-option ${isSel ? 'selected' : ''}" data-model="${escapeHtml(m.id)}">${escapeHtml(m.id)}</button>`;
       });
       selectOptions += `</optgroup>`;
     }
@@ -329,19 +329,37 @@ function renderTeamGrid(scan) {
       </div>
       <p style="font-size:12px; color:var(--text-muted);">${escapeHtml(exp.desc)}</p>
       <div class="model-selector-row">
-        <label>设定/分配模型:</label>
-        <select class="model-select" data-agent="${escapeHtml(exp.name)}">
-          ${selectOptions}
-        </select>
+        <label for="model-input-${escapeHtml(exp.name)}">设定/分配模型:</label>
+        <div class="model-combobox">
+          <input id="model-input-${escapeHtml(exp.name)}" type="search" class="model-select" data-agent="${escapeHtml(exp.name)}" value="${escapeHtml(selectedModel)}" placeholder="输入模型名称进行搜索" autocomplete="off" />
+          <div class="model-options" role="listbox">${selectOptions || '<span class="model-empty">未扫描到模型</span>'}</div>
+        </div>
       </div>
     `;
 
     const selectEl = card.querySelector('.model-select');
-    if (selectEl) {
-      selectEl.addEventListener('change', (e) => {
-        appState.selectedModels[exp.name] = e.target.value.trim();
+    const optionsEl = card.querySelector('.model-options');
+    const updateOptions = () => {
+      const query = selectEl.value.trim().toLowerCase();
+      optionsEl.querySelectorAll('.model-option').forEach(option => {
+        option.hidden = Boolean(query && !option.dataset.model.toLowerCase().includes(query));
       });
-    }
+      optionsEl.classList.add('open');
+    };
+    selectEl.addEventListener('focus', updateOptions);
+    selectEl.addEventListener('input', () => {
+      appState.selectedModels[exp.name] = selectEl.value.trim();
+      updateOptions();
+    });
+    optionsEl.querySelectorAll('.model-option').forEach(option => {
+      option.addEventListener('mousedown', event => event.preventDefault());
+      option.addEventListener('click', () => {
+        selectEl.value = option.dataset.model;
+        appState.selectedModels[exp.name] = option.dataset.model;
+        optionsEl.classList.remove('open');
+      });
+    });
+    selectEl.addEventListener('blur', () => setTimeout(() => optionsEl.classList.remove('open'), 120));
 
     container.appendChild(card);
   });
@@ -349,12 +367,8 @@ function renderTeamGrid(scan) {
 
 function filterModelOptions(query) {
   const q = query.trim().toLowerCase();
-  document.querySelectorAll('.model-select').forEach(sel => {
-    Array.from(sel.options).forEach(opt => {
-      if (opt.value === '') return;
-      const match = opt.text.toLowerCase().includes(q) || opt.value.toLowerCase().includes(q);
-      opt.style.display = match || !q ? '' : 'none';
-    });
+  document.querySelectorAll('.agent-card').forEach(card => {
+    card.hidden = Boolean(q && !card.textContent.toLowerCase().includes(q));
   });
 }
 

@@ -639,9 +639,10 @@ fn test_scanner_extracts_providers_models_and_config_bindings() {
                 "openai": { "models": { "gpt-4o": {}, "gpt-4o-mini": {} } },
                 "deepseek": { "models": { "deepseek-chat": {} } }
             },
-            "agent": {
-                "rapid-builder-deepseek-go": { "model": "deepseek/deepseek-chat" },
-                "rapid-ui": { "model": "openai/gpt-4o" }
+             "agent": {
+                 "rapid-builder-deepseek-go": { "model": "deepseek/deepseek-chat" },
+                 "rapid-ui": { "model": "openai/gpt-4o" },
+                 "rapid-builder-glm-zhipu": { "model": "zhipuai-coding-plan/glm-5.3-flash" }
             }
         }"#,
     )
@@ -703,6 +704,9 @@ fn test_scanner_extracts_providers_models_and_config_bindings() {
         builder.current_model.as_deref(),
         Some("deepseek/deepseek-chat")
     );
+
+    // 即使模型只存在于 Agent 当前绑定，也必须进入可选模型清单。
+    assert!(model_ids.contains(&"zhipuai-coding-plan/glm-5.3-flash".to_string()));
 
     let _ = fs::remove_dir_all(&temp_root);
 }

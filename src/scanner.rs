@@ -97,25 +97,25 @@ pub fn get_global_opencode_dir() -> PathBuf {
         }
     }
 
-    // 3. User home ~/.config/opencode (Standard for OpenCode across Linux/macOS/Windows)
+    // 3. 选择真正包含 OpenCode 配置或 Agent 的候选目录。
+    // Windows 的 %APPDATA% 可能只有 EBWebView，不能仅凭目录存在就选中。
+    let mut candidates = Vec::new();
     if let Some(home) = dirs::home_dir() {
-        let opencode = home.join(".config").join("opencode");
-        if opencode.exists() {
-            return opencode;
-        }
+        candidates.push(home.join(".config").join("opencode"));
     }
-
-    // 4. User config directory fallback (%APPDATA%\opencode on Windows, ~/.config/opencode on Linux)
     if let Some(config_dir) = dirs::config_dir() {
-        let opencode = config_dir.join("opencode");
-        if opencode.exists() {
-            return opencode;
-        }
+        candidates.push(config_dir.join("opencode"));
     }
-
-    // 5. Default fallback to ~/.config/opencode
-    if let Some(home) = dirs::home_dir() {
-        return home.join(".config").join("opencode");
+    if let Some(candidate) = candidates.iter().find(|p| {
+        p.join("opencode.jsonc").is_file()
+            || p.join("opencode.json").is_file()
+            || p.join("agents").is_dir()
+            || p.join("agent").is_dir()
+    }) {
+        return candidate.clone();
+    }
+    if let Some(candidate) = candidates.into_iter().next() {
+        return candidate;
     }
 
     PathBuf::from(".config/opencode")
@@ -312,8 +312,37 @@ pub fn scan_environment(project_path: Option<&Path>, use_project: bool) -> ScanR
                             content_hash: Some(content_hash),
                         },
                     );
+
+                    // 保留 Agent 当前绑定，即便 Provider 模型清单未声明该模型。
+                    if let Some(model_id) = found_agents
+                        .get(file_stem)
+                        .and_then(|agent| agent.current_model.as_deref())
+                    {
+                        if let Some((provider, model_name)) = model_id.split_once('/') {
+                            providers_set.insert(provider.to_string());
+                            models_map
+                                .entry(model_id.to_string())
+                                .or_insert(ModelOption {
+                                    id: model_id.to_string(),
+                                    provider: provider.to_string(),
+                                    model_name: model_name.to_string(),
+                                });
+                        }
+                    }
                 }
             }
+        }
+    }
+
+    // 配置文件中的 Agent 绑定也必须进入模型选择器，即使对应的 Agent 文件尚未安装。
+    for model_id in config_agent_bindings.values() {
+        if let Some((provider, model_name)) = model_id.split_once('/') {
+            providers_set.insert(provider.to_string());
+            models_map.entry(model_id.clone()).or_insert(ModelOption {
+                id: model_id.clone(),
+                provider: provider.to_string(),
+                model_name: model_name.to_string(),
+            });
         }
     }
 
