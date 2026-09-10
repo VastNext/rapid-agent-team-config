@@ -15,6 +15,10 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use tao::{
     dpi::LogicalSize,
     event::{Event, StartCause, WindowEvent},
@@ -314,6 +318,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let js_content = include_str!("frontend/app.js");
     let icon_content = include_bytes!("../assets/icon.png");
     let show_window_proxy = event_proxy.clone();
+    let ipc_in_flight = Arc::new(AtomicUsize::new(0));
+    let ipc_limit = Arc::clone(&ipc_in_flight);
 
     let builder = WebViewBuilder::new()
         .with_asynchronous_custom_protocol("app".into(), move |_webview_id, request, responder| {
@@ -340,7 +346,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .map(|response| responder.respond(response))
                     .unwrap(),
                 "/api/ipc" => {
+                    const MAX_IPC_TASKS: usize = 4;
+                    let current =
+                        ipc_limit.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                            (count < MAX_IPC_TASKS).then_some(count + 1)
+                        });
+                    if current.is_err() {
+                        let response = Response::builder()
+                            .status(429)
+                            .header("Content-Type", "application/json; charset=utf-8")
+                            .body(Cow::Owned(
+                                serde_json::json!({
+                                    "data": null,
+                                    "error": "任务过多，请稍后重试"
+                                })
+                                .to_string()
+                                .into_bytes(),
+                            ))
+                            .unwrap();
+                        responder.respond(response);
+                        return;
+                    }
                     let req_body = request.body().to_vec();
+                    let task_counter = Arc::clone(&ipc_limit);
                     std::thread::spawn(move || {
                         let resp_obj = match serde_json::from_slice::<IpcMessage>(&req_body) {
                             Ok(msg) => handle_ipc_request(msg),
@@ -355,6 +383,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .body(Cow::Owned(resp_bytes))
                             .unwrap();
                         responder.respond(response);
+                        task_counter.fetch_sub(1, Ordering::AcqRel);
                     });
                 }
                 _ => Response::builder()

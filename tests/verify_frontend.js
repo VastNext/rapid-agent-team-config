@@ -117,6 +117,10 @@ if (!js.includes('modelIndex') || !js.includes('slice(0, 100)')) {
   console.error("Model candidates must use one indexed, bounded shared list!");
   process.exit(1);
 }
+if (!mainRs.includes('MAX_IPC_TASKS') || !mainRs.includes('fetch_update')) {
+  console.error("IPC work must have a bounded in-flight task limit!");
+  process.exit(1);
+}
 // installFromDir 需与 ZIP 流程一致的安装前确认（安装计划 + 用户确认）
 if (!js.includes('installFromDir') || !js.includes('confirm(')) {
   console.error("installFromDir must show user confirmation before installing!");
