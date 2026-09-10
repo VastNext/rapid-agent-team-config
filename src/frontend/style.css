@@ -383,6 +383,7 @@ body {
 .model-combobox { position: relative; flex: 1; z-index: 1; }
 .model-combobox:focus-within { z-index: 20; }
 .model-options { display: none; position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px); max-height: 220px; overflow-y: auto; overflow-x: hidden; background: var(--bg-primary); border: 1px solid var(--border-focus); border-radius: 8px; padding: 4px; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45); }
+.model-options#shared-model-options { position: fixed; left: auto; right: auto; top: auto; }
 .model-options.open { display: grid; gap: 2px; }
 .model-combobox:focus-within .model-options { display: grid; gap: 2px; }
 .model-option { display: block; width: 100%; border: 0; background: var(--bg-secondary); color: var(--text-main); text-align: left; line-height: 1.35; padding: 8px 10px; border-radius: 5px; cursor: pointer; white-space: normal; overflow-wrap: anywhere; }

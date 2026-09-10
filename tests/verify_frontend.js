@@ -109,6 +109,10 @@ if (!js.includes('model-filter-input') || !js.includes('filterModelOptions') || 
   console.error("Missing searchable model select (model-filter-input / filterModelOptions)!");
   process.exit(1);
 }
+if (!js.includes('requestAnimationFrame') || !js.includes('scheduleModelFilter')) {
+  console.error("Global model filtering must be coalesced to animation frames!");
+  process.exit(1);
+}
 // installFromDir 需与 ZIP 流程一致的安装前确认（安装计划 + 用户确认）
 if (!js.includes('installFromDir') || !js.includes('confirm(')) {
   console.error("installFromDir must show user confirmation before installing!");
