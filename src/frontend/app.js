@@ -129,8 +129,7 @@ function fuzzyMatch(value, query) {
 // Initial Load
 window.addEventListener('DOMContentLoaded', async () => {
   setupEventHandlers();
-  // 前置确认通过前不读取 OpenCode 配置。
-  await loadSavedAppConfig();
+  // 前置确认通过前不读取任何本地配置，包括应用自己的代理配置。
   renderConfigPathList();
 });
 
@@ -293,10 +292,11 @@ function renderConfigPathList() {
   });
 }
 
-function confirmScan() {
+async function confirmScan() {
   appState.scanConfirmed = true;
   const consent = document.getElementById('consent-screen');
   if (consent) consent.remove();
+  await loadSavedAppConfig();
   refreshState();
 }
 

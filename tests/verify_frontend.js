@@ -142,6 +142,11 @@ if (!html.includes('consent-screen') || !html.includes('config-path-input') ||
   console.error("Missing pre-scan consent gate or explicit config path flow!");
   process.exit(1);
 }
+const initialLoadBlock = js.match(/DOMContentLoaded[\s\S]*?\n\}\);/)?.[0] || '';
+if (initialLoadBlock.includes('loadSavedAppConfig(')) {
+  console.error("App configuration must not load before consent confirmation!");
+  process.exit(1);
+}
 // 缺少 Rapid Team 时安装向导应出现并引导（banner 文案 / 安装按钮）
 if (!js.includes('btn-install-wizard') || !js.includes('一键安装 Rapid Team')) {
   console.error("Install wizard entry missing when Rapid Team absent!");
