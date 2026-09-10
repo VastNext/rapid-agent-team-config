@@ -23,7 +23,7 @@ use tao::{
 };
 use wry::{http::Response, PageLoadEvent, WebViewBuilder};
 
-const ICON_PNG: &[u8] = include_bytes!("../assets/icon.png");
+const ICON_PNG: &[u8] = include_bytes!("../assets/icon-window.png");
 
 enum UserEvent {
     ShowWindow,
@@ -316,43 +316,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let show_window_proxy = event_proxy.clone();
 
     let builder = WebViewBuilder::new()
-        .with_custom_protocol("app".into(), move |_webview_id, request| {
+        .with_asynchronous_custom_protocol("app".into(), move |_webview_id, request, responder| {
             let path = request.uri().path();
             match path {
                 "/" | "/index.html" => Response::builder()
                     .header("Content-Type", "text/html; charset=utf-8")
                     .body(Cow::Borrowed(html_content.as_bytes()))
+                    .map(|response| responder.respond(response))
                     .unwrap(),
                 "/style.css" => Response::builder()
                     .header("Content-Type", "text/css; charset=utf-8")
                     .body(Cow::Borrowed(css_content.as_bytes()))
+                    .map(|response| responder.respond(response))
                     .unwrap(),
                 "/app.js" => Response::builder()
                     .header("Content-Type", "application/javascript; charset=utf-8")
                     .body(Cow::Borrowed(js_content.as_bytes()))
+                    .map(|response| responder.respond(response))
                     .unwrap(),
                 "/icon.png" => Response::builder()
                     .header("Content-Type", "image/png")
                     .body(Cow::Borrowed(&icon_content[..]))
+                    .map(|response| responder.respond(response))
                     .unwrap(),
                 "/api/ipc" => {
-                    let req_body = request.body();
-                    let resp_obj = match serde_json::from_slice::<IpcMessage>(req_body) {
-                        Ok(msg) => handle_ipc_request(msg),
-                        Err(e) => IpcResponse {
-                            data: None,
-                            error: Some(format!("IPC JSON 解析错误: {}", e)),
-                        },
-                    };
-                    let resp_bytes = serde_json::to_vec(&resp_obj).unwrap_or_default();
-                    Response::builder()
-                        .header("Content-Type", "application/json; charset=utf-8")
-                        .body(Cow::Owned(resp_bytes))
-                        .unwrap()
+                    let req_body = request.body().to_vec();
+                    std::thread::spawn(move || {
+                        let resp_obj = match serde_json::from_slice::<IpcMessage>(&req_body) {
+                            Ok(msg) => handle_ipc_request(msg),
+                            Err(e) => IpcResponse {
+                                data: None,
+                                error: Some(format!("IPC JSON 解析错误: {}", e)),
+                            },
+                        };
+                        let resp_bytes = serde_json::to_vec(&resp_obj).unwrap_or_default();
+                        let response = Response::builder()
+                            .header("Content-Type", "application/json; charset=utf-8")
+                            .body(Cow::Owned(resp_bytes))
+                            .unwrap();
+                        responder.respond(response);
+                    });
                 }
                 _ => Response::builder()
                     .status(404)
                     .body(Cow::Borrowed(&b"Not Found"[..]))
+                    .map(|response| responder.respond(response))
                     .unwrap(),
             }
         })
