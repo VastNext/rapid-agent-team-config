@@ -19,11 +19,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 当前阶段只发布 Windows 版本；其它平台等功能稳定后再恢复。
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: RapidAgentTeamConfig.exe
             asset_name: RapidAgentTeamConfig-windows-x64.exe
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            artifact_name: RapidAgentTeamConfig
+            asset_name: RapidAgentTeamConfig-linux-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: RapidAgentTeamConfig
+            asset_name: RapidAgentTeamConfig-macos-arm64
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact_name: RapidAgentTeamConfig
+            asset_name: RapidAgentTeamConfig-macos-x64
 
     steps:
       - name: Checkout repository
