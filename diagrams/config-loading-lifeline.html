@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>数据生命周期图 — Rapid Agent Team Configurator</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-serif; background: #f8fafc; color: #1e293b; padding: 24px; }
+  h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+  .subtitle { font-size: 13px; color: #64748b; margin-bottom: 20px; }
+  .mermaid { display: flex; justify-content: center; }
+  .mermaid svg { max-width: 100%; height: auto; }
+  .section { margin-top: 32px; }
+  .section h2 { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #334155; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 12px; border: 1px solid #e2e8f0; text-align: left; }
+  th { background: #f1f5f9; font-weight: 600; color: #475569; }
+  td code { background: #f1f5f9; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>数据生命周期图</h1>
+<p class="subtitle">从原始文件到最终 ScanResult 的数据流转路径</p>
+
+<div class="section">
+<h2>1. 数据流状态机</h2>
+<div class="mermaid">
+stateDiagram-v2
+    [*] --> AppConfig: 启动读取 config.json
+    AppConfig --> ProxyReady: proxy 就绪
+    ProxyReady --> WaitConsent: WebView 加载
+    WaitConsent --> Scanning: 用户确认
+    Scanning --> ConfigParsing: 定位配置文件
+    ConfigParsing --> AgentScanning: 解析完成
+    AgentScanning --> CompletenessCheck: 扫描完成
+    CompletenessCheck --> ScanResult: 汇总结果
+    ScanResult --> [*]: 返回前端
+
+    state WaitConsent {
+        [*] --> ConsentPage
+        ConsentPage --> ConsentPage: 等待点击
+    }
+
+    state ConfigParsing {
+        [*] --> RawContent
+        RawContent --> CleanedJson: jsonc_strip
+        CleanedJson --> ParsedValue: JSON parse
+        ParsedValue --> ProvidersSet: provider.models
+        ParsedValue --> ModelsMap: provider.models
+        ParsedValue --> AgentBindings: agent.model
+    }
+
+    state AgentScanning {
+        [*] --> DirRead
+        DirRead --> FileRead: .md files
+        FileRead --> HashComputed: SHA-256
+        FileRead --> UtfDecoded: UTF-8
+        UtfDecoded --> FrontmatterParsed: parse_frontmatter
+        FrontmatterParsed --> ModelResolved: model or fallback
+        ModelResolved --> AgentStatusBuilt: build AgentStatus
+    }
+
+    state CompletenessCheck {
+        [*] --> MissingAgents
+        MissingAgents --> CommandCheck: compare 9 agents
+        CommandCheck --> SkillCheck: check command file
+        SkillCheck --> TeamStatus: check skill dir
+    }
+</div>
+</div>
+
+<div class="section">
+<h2>2. 配置文件读取清单</h2>
+<table>
+<thead>
+<tr><th>序号</th><th>文件路径</th><th>读取时机</th><th>提取数据</th><th>存储目标</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td><code>~/.config/rapid-agent-team-config/config.json</code></td><td>App 启动（main.rs）</td><td>proxy: ProxyConfig</td><td>AppConfig</td></tr>
+<tr><td>2a</td><td><code>&lt;project&gt;/.opencode/opencode.json</code></td><td rowspan="3">用户确认后（scanner）</td><td rowspan="3">provider.*.models.*<br/>agent/agents.*.model</td><td rowspan="3">providers_set<br/>models_map<br/>config_agent_bindings</td></tr>
+<tr><td>2b</td><td><code>&lt;project&gt;/.opencode/opencode.jsonc</code></td></tr>
+<tr><td>2c</td><td><code>&lt;project&gt;/opencode.json</code></td></tr>
+<tr><td>3a</td><td><code>&lt;global&gt;/opencode.json</code></td><td rowspan="2">用户确认后（继承）</td><td rowspan="2">同上，first-wins 合并</td><td rowspan="2">同上</td></tr>
+<tr><td>3b</td><td><code>&lt;global&gt;/opencode.jsonc</code></td></tr>
+<tr><td>4</td><td><code>&lt;scan_dir&gt;/*.md</code>（所有 Agent 文件）</td><td rowspan="2">扫描阶段</td><td rowspan="2">model, mode, description<br/>mtime, SHA-256 hash</td><td rowspan="2">AgentStatus<br/>found_agents</td></tr>
+<tr><td>5</td><td><code>commands/rapid-dev.md</code>（存在性检查）</td></tr>
+<tr><td>6</td><td><code>skills/rapid-dev-team/</code>（存在性检查）</td><td>完整性检查</td><td>command_installed: bool</td><td>TeamInstallStatus</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="section">
+<h2>3. Agent 目录搜索优先级</h2>
+<table>
+<thead>
+<tr><th>优先级</th><th>项目模式</th><th>全局模式</th><th>Source Label</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td><code>&lt;project&gt;/.opencode/agents/</code></td><td><code>&lt;global&gt;/agents/</code></td><td>project / global</td></tr>
+<tr><td>2</td><td><code>&lt;project&gt;/.opencode/agent/</code></td><td><code>&lt;global&gt;/agent/</code></td><td>project / global</td></tr>
+<tr><td>3</td><td><code>&lt;project&gt;/agents/</code></td><td>—</td><td>project</td></tr>
+<tr><td>4</td><td><code>&lt;project&gt;/agent/</code></td><td>—</td><td>project</td></tr>
+<tr><td>5</td><td><code>&lt;global&gt;/agents/</code></td><td>—</td><td>global（继承）</td></tr>
+<tr><td>6</td><td><code>&lt;global&gt;/agent/</code></td><td>—</td><td>global（继承）</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="section">
+<h2>4. ScanResult 数据结构</h2>
+<div class="mermaid">
+classDiagram
+    class ScanResult {
+        +String target_scope
+        +String opencode_dir
+        +String config_file_path
+        +Vec~String~ providers
+        +Vec~ModelOption~ models
+        +Vec~AgentStatus~ agents
+        +Map~String,String~ config_agent_bindings
+        +TeamInstallStatus team_status
+        +String project_dir
+    }
+
+    class ModelOption {
+        +String id "provider/model_key"
+        +String provider
+        +String model_name
+    }
+
+    class AgentStatus {
+        +String name
+        +String file_name
+        +String full_path
+        +bool is_installed
+        +String current_model
+        +String source "project | global"
+        +String mode "primary | subagent"
+        +String description
+        +u64 mtime
+        +String content_hash
+    }
+
+    class TeamInstallStatus {
+        +Vec~String~ missing_agents
+        +int installed_count
+        +bool command_installed
+        +bool skill_installed
+        +bool is_installed_complete
+        +bool is_installed_partial
+    }
+
+    class ProxyConfig {
+        +String host
+        +u16 port
+        +String scheme
+    }
+
+    class AppConfig {
+        +ProxyConfig proxy
+    }
+
+    ScanResult --> ModelOption
+    ScanResult --> AgentStatus
+    ScanResult --> TeamInstallStatus
+    AppConfig --> ProxyConfig
+</div>
+</div>
+
+<script>mermaid.initialize({startOnLoad:true, theme:'default'});</script>
+</body>
+</html>

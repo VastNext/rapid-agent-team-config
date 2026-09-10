@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>配置加载时序图 — Rapid Agent Team Configurator</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans SC", sans-serif; background: #f8fafc; color: #1e293b; padding: 24px; }
+  h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+  .subtitle { font-size: 13px; color: #64748b; margin-bottom: 20px; }
+  .mermaid { display: flex; justify-content: center; }
+  .mermaid svg { max-width: 100%; height: auto; }
+</style>
+</head>
+<body>
+<h1>配置加载时序图</h1>
+<p class="subtitle">从 app 启动到 ScanResult 返回前端的完整文件读取链路</p>
+<div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant App as App 启动
+    participant FS as 文件系统
+    participant Scanner as Scanner
+    participant Writer as Writer
+    participant FE as 前端
+
+    rect rgb(240, 245, 255)
+    Note over App,FS: 阶段 0 — 应用启动（main.rs）
+    App->>FS: load_app_config()<br/>读取 ~/.config/rapid-agent-team-config/config.json
+    FS-->>App: AppConfig { proxy: Option&lt;ProxyConfig&gt; }
+    Note right of App: 代理配置仅用于下载客户端<br/>不污染全局环境变量
+    end
+
+    rect rgb(255, 248, 240)
+    Note over App,FE: 阶段 1 — 原生初始化
+    App->>App: EventLoop + Window(1040×720)<br/>+ PNG 图标 + WebView
+    App->>FE: 加载 app://localhost/index.html
+    FE->>FE: DOMContentLoaded<br/>appState + callRust + 事件绑定<br/>显示同意确认页
+    end
+
+    rect rgb(240, 255, 240)
+    Note over FE,FS: 阶段 2 — 用户确认后：定位配置文件
+    FE->>Scanner: scan_environment(projectPath, useProject, configPaths)
+    Scanner->>Scanner: resolve_base_dir()<br/>OPENCODE_CONFIG_DIR / OPENCODE_CONFIG<br/>或 $HOME/.config/opencode/
+    Scanner->>FS: 检查配置文件存在性
+    Note right of Scanner: 项目模式优先读项目级<br/>再继承全局配置
+    end
+
+    rect rgb(240, 240, 255)
+    Note over Scanner,FS: 阶段 3 — 读取 opencode.json / opencode.jsonc
+    alt 显式路径
+        Scanner->>FS: read_to_string(explicit_path)
+    else 项目模式
+        Scanner->>FS: read(&lt;project&gt;/.opencode/opencode.json)
+        Scanner->>FS: read(&lt;project&gt;/.opencode/opencode.jsonc)
+        Scanner->>FS: read(&lt;project&gt;/opencode.json)
+        Scanner->>FS: read(&lt;project&gt;/opencode.jsonc)
+        Scanner->>FS: read(&lt;global&gt;/opencode.json) [继承]
+    else 全局模式
+        Scanner->>FS: read(&lt;global&gt;/opencode.json)
+        Scanner->>FS: read(&lt;global&gt;/opencode.jsonc)
+    end
+    Scanner->>Writer: jsonc_strip(raw_content)
+    Note right of Writer: 1. 去除 // 和 /* */ 注释<br/>2. 去除尾部逗号
+    Writer-->>Scanner: cleaned JSON string
+    Scanner->>Scanner: serde_json::from_str()
+    Scanner->>Scanner: 提取 provider.*.models.*<br/>→ providers_set + models_map
+    Scanner->>Scanner: 提取 agent/agents.*.model<br/>→ config_agent_bindings
+    end
+
+    rect rgb(255, 240, 240)
+    Note over Scanner,FS: 阶段 4 — 扫描 Agent Markdown 文件
+    Scanner->>FS: read_dir(agents/) 或 read_dir(agent/)
+    Note right of Scanner: 项目模式：<br/>  &lt;project&gt;/.opencode/agents/<br/>  &lt;project&gt;/.opencode/agent/<br/>  &lt;project&gt;/agents/<br/>  &lt;project&gt;/agent/<br/>  &lt;global&gt;/agents/ [继承]<br/>全局模式：<br/>  &lt;global&gt;/agents/<br/>  &lt;global&gt;/agent/
+    loop 遍历每个 .md 文件
+        Scanner->>FS: read(&lt;agent-name&gt;.md)
+        FS-->>Scanner: raw bytes
+        Scanner->>Writer: compute_sha256_hex(bytes)
+        Writer-->>Scanner: content_hash
+        Scanner->>Scanner: String::from_utf8_lossy(bytes)
+        Scanner->>Scanner: parse_frontmatter(content)
+        Note right of Scanner: 提取 YAML 字段：<br/>model: "provider/model"<br/>mode: "primary" | "subagent"<br/>description: "..."
+        alt frontmatter 无 model
+            Scanner->>Scanner: fallback: config_agent_bindings.get(name)
+        end
+        Scanner->>Scanner: 注入 providers_set + models_map
+    end
+    end
+
+    rect rgb(245, 245, 240)
+    Note over Scanner,FS: 阶段 5 — 检查 Rapid Agent Team 完整性
+    Scanner->>FS: exists(commands/rapid-dev.md)
+    Scanner->>FS: exists(skills/rapid-dev-team/)
+    Scanner->>Scanner: 检查 9 个硬编码 Agent 是否全部安装
+    Note right of Scanner: missing_agents = 期望 - 已找到<br/>is_installed_complete = 全部就绪<br/>is_installed_partial = 部分就绪
+    end
+
+    rect rgb(240, 250, 255)
+    Note over Scanner,FE: 阶段 6 — 返回 ScanResult
+    Scanner-->>FE: ScanResult JSON<br/>{ target_scope, opencode_dir,<br/>config_file_path, providers,<br/>models, agents, config_agent_bindings,<br/>team_status, project_dir }
+    FE->>FE: 渲染状态页<br/>显示 9 个 Agent 状态
+    end
+</div>
+<script>mermaid.initialize({startOnLoad:true, theme:'default', sequence:{mirrorActors:false, actorMargin:50, messageMargin:40, boxMargin:8, noteMargin:12}});</script>
+</body>
+</html>
