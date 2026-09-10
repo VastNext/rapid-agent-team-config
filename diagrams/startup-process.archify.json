@@ -2,13 +2,23 @@
   "schema_version": 2,
   "diagram_type": "workflow",
   "meta": {
-    "title": "Rapid Agent Team Configurator 启动过程",
+    "title": "Rapid Agent Team Configurator 启动全流程",
     "locale": "zh-CN",
-    "quality_profile": "showcase",
+    "quality_profile": "standard",
     "output": "diagrams/startup-process.html",
     "views": [
-      { "id": "nativeBoot", "label": "原生启动", "focus": ["exe", "bundle", "shell", "webview"], "note": "从可执行文件、内嵌资源到原生窗口和 WebView。" },
-      { "id": "safeScan", "label": "授权扫描", "focus": ["webview", "consent", "ready"], "note": "确认前不读取配置；确认后通过 IPC 扫描并渲染状态。" }
+      {
+        "id": "nativeBoot",
+        "label": "原生启动",
+        "focus": ["exe", "bundle", "shell", "webview"],
+        "note": "build.rs 嵌入资源→EventLoop→窗口+图标→WebView→app://协议→IPC白名单。"
+      },
+      {
+        "id": "safeScan",
+        "label": "授权扫描",
+        "focus": ["webview", "consent", "ready"],
+        "note": "确认前不读取配置；确认后 config.json→proxy→扫描→JSONC→Provider/Model→Agent→ScanResult。"
+      }
     ]
   },
   "lanes": [
@@ -23,21 +33,81 @@
   ],
   "mainPath": ["exe", "bundle", "shell", "webview", "consent", "ready"],
   "nodes": [
-    { "id": "exe", "lane": "build", "col": 0, "type": "backend", "label": "启动可执行文件", "sublabel": "Rust 桌面程序", "tag": "Cargo bin", "width": 140 },
-    { "id": "bundle", "lane": "build", "col": 1, "type": "frontend", "label": "编译期嵌入资源", "sublabel": "HTML / CSS / JS / 图标", "width": 140 },
-    { "id": "shell", "lane": "native", "col": 2, "type": "backend", "label": "初始化原生壳", "sublabel": "EventLoop + Window + app://", "tag": "Tao / Wry", "width": 146 },
-    { "id": "webview", "lane": "webview", "col": 3, "type": "frontend", "label": "加载前端首屏", "sublabel": "index.html → DOMContentLoaded", "width": 146 },
-    { "id": "consent", "lane": "webview", "col": 4, "type": "security", "label": "等待用户确认", "sublabel": "明确读取范围；默认不扫描", "tag": "安全门禁", "width": 146 },
-    { "id": "ready", "lane": "webview", "col": 5, "type": "frontend", "label": "渲染并驻留", "sublabel": "状态页可用；事件循环等待", "width": 140 }
+    {
+      "id": "exe",
+      "lane": "build",
+      "col": 0,
+      "type": "backend",
+      "label": "build.rs 执行",
+      "sublabel": "winresource 嵌入图标元数据",
+      "tag": "Cargo bin",
+      "width": 140
+    },
+    {
+      "id": "bundle",
+      "lane": "build",
+      "col": 1,
+      "type": "frontend",
+      "label": "编译期嵌入资源",
+      "sublabel": "HTML / CSS / JS / PNG",
+      "width": 140
+    },
+    {
+      "id": "shell",
+      "lane": "native",
+      "col": 2,
+      "type": "backend",
+      "label": "原生初始化",
+      "sublabel": "EventLoop + Window + app://",
+      "tag": "tao + wry",
+      "width": 146
+    },
+    {
+      "id": "webview",
+      "lane": "webview",
+      "col": 3,
+      "type": "frontend",
+      "label": "前端初始化 + IPC",
+      "sublabel": "appState + callRust + 事件绑定",
+      "tag": "app.js",
+      "width": 146
+    },
+    {
+      "id": "consent",
+      "lane": "webview",
+      "col": 4,
+      "type": "security",
+      "label": "同意确认页",
+      "sublabel": "确认前不读取任何配置",
+      "tag": "安全门禁",
+      "width": 146
+    },
+    {
+      "id": "ready",
+      "lane": "webview",
+      "col": 5,
+      "type": "frontend",
+      "label": "扫描 + 写入 + 渲染",
+      "sublabel": "config→scan→JSONC→原子写入",
+      "width": 140
+    }
   ],
   "edges": [
     { "id": "run", "from": "exe", "to": "bundle", "label": "系统加载二进制", "variant": "emphasis" },
     { "id": "assets", "from": "bundle", "to": "shell", "label": "include_str! / include_bytes!", "variant": "emphasis" },
-    { "id": "openWebview", "from": "shell", "to": "webview", "label": "打开 app://localhost/index.html", "variant": "emphasis" },
+    { "id": "openWebview", "from": "shell", "to": "webview", "label": "加载 app://localhost/index.html", "variant": "emphasis" },
     { "id": "showConsent", "from": "webview", "to": "consent", "label": "绑定事件并显示确认页", "variant": "emphasis" },
-    { "id": "authorized", "from": "consent", "to": "ready", "label": "确认后刷新状态", "variant": "emphasis" }
+    { "id": "authorized", "from": "consent", "to": "ready", "label": "确认后执行扫描+写入", "variant": "security" }
   ],
   "cards": [
-    { "dot": "cyan", "title": "关键结论", "items": ["启动时内嵌并加载前端资源，注册 app:// 协议与 IPC 白名单", "确认前不读取配置；确认后才加载代理偏好并扫描 OpenCode", "扫描结果渲染 9 成员状态，事件循环驻留直到窗口关闭"] }
+    {
+      "dot": "cyan",
+      "title": "关键结论",
+      "items": [
+        "build.rs 嵌入图标元数据；include_str!/bytes! 编译期嵌入 HTML/CSS/JS/PNG",
+        "EventLoop→Window→WebView→app://协议→IPC白名单(15+动作)",
+        "确认前零配置读取；确认后链式执行 config→scan→JSONC→Provider/Agent→ScanResult→原子写入"
+      ]
+    }
   ]
 }
