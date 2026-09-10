@@ -1,0 +1,12 @@
+{
+  "date": "2026-09-11",
+  "dataset": "synthetic-model-search",
+  "model_count": 10000,
+  "queries": {
+    "gemini flash": { "matches": 10000, "elapsed_ms": 62.976 },
+    "model 9999": { "matches": 1, "elapsed_ms": 49.945 },
+    "zhipu glm53": { "matches": 0, "elapsed_ms": 49.856 },
+    "not-found": { "matches": 0, "elapsed_ms": 0 }
+  },
+  "note": "记录的是一次本地合成基线，不是跨机器性能承诺；重新运行 tests/perf-baseline.js 获取当前结果。"
+}

@@ -12,7 +12,12 @@ let appState = {
   currentPlan: null,
   latestRelease: null,
   configPaths: [],
-  scanConfirmed: false
+  scanConfirmed: false,
+  modelIndex: [],
+  activeModelInput: null,
+  activeModelAgent: null,
+  modelPickerTimer: null,
+  searchFrame: null
 };
 
 // Safe HTML escaping helper
@@ -107,13 +112,17 @@ function normalizeSearchText(value) {
   return String(value || '').toLowerCase().replace(/[\s\/_().:-]+/g, '');
 }
 
-function fuzzyMatch(value, query) {
-  const target = normalizeSearchText(value);
-  const tokens = String(query || '')
+function parseSearchTokens(query) {
+  return String(query || '')
     .toLowerCase()
     .split(/\s+/)
     .map(normalizeSearchText)
     .filter(Boolean);
+}
+
+function fuzzyMatch(value, query) {
+  const target = normalizeSearchText(value);
+  const tokens = parseSearchTokens(query);
   return tokens.every(token => {
     if (target.includes(token)) return true;
     let cursor = 0;
@@ -205,7 +214,7 @@ function setupEventHandlers() {
   const filterInput = document.getElementById('model-filter-input');
   if (filterInput) {
     filterInput.addEventListener('input', (e) => {
-      filterModelOptions(e.target.value);
+      scheduleModelFilter(e.target.value);
     });
   }
 
@@ -217,6 +226,19 @@ function setupEventHandlers() {
   safeBind('btn-cancel-apply', 'click', closeModal);
   safeBind('btn-confirm-apply', 'click', confirmApply);
   safeBind('btn-copy-diff', 'click', copyCurrentDiff);
+  const sharedModelOptions = document.getElementById('shared-model-options');
+  if (sharedModelOptions) {
+    sharedModelOptions.addEventListener('mousedown', event => {
+      if (event.target.closest('.model-option')) event.preventDefault();
+    });
+    sharedModelOptions.addEventListener('click', event => {
+      const option = event.target.closest('.model-option');
+      if (!option || !appState.activeModelInput) return;
+      appState.activeModelInput.value = option.dataset.model;
+      appState.selectedModels[appState.activeModelAgent] = option.dataset.model;
+      sharedModelOptions.classList.remove('open');
+    });
+  }
 
   // Install handlers
   safeBind('btn-install-zip', 'click', installFromZip);
@@ -355,6 +377,11 @@ function renderTeamGrid(scan) {
   if (!container) return;
   container.innerHTML = '';
 
+  appState.modelIndex = (scan.models || []).map(model => ({
+    ...model,
+    searchText: normalizeSearchText(model.id)
+  }));
+
   const expectedAgents = [
     { name: 'rapid-dev-team', title: 'rapid-dev-team (队长/协调调度)', mode: 'primary', desc: '总协调调度，负责分发工作流及审核交付' },
     { name: 'rapid-scout', title: 'rapid-scout (侦察兵)', mode: 'subagent', desc: '负责项目侦察、依赖扫描、信息整理' },
@@ -381,24 +408,6 @@ function renderTeamGrid(scan) {
     const selectedModel = appState.selectedModels[exp.name] || (existing ? existing.current_model || '' : '');
     const sourceLabel = existing ? (existing.source === 'project' ? ' [项目]' : ' [全局]') : '';
 
-    // Group models by provider
-    const modelsByProvider = {};
-    if (scan && scan.models) {
-      scan.models.forEach(m => {
-        if (!modelsByProvider[m.provider]) modelsByProvider[m.provider] = [];
-        modelsByProvider[m.provider].push(m);
-      });
-    }
-
-    let selectOptions = '';
-    for (const [provider, list] of Object.entries(modelsByProvider)) {
-      selectOptions += `<div class="model-provider-label">Provider: ${escapeHtml(provider)}</div>`;
-      list.forEach(m => {
-        const isSel = m.id === selectedModel ? 'selected' : '';
-        selectOptions += `<button type="button" class="model-option ${isSel ? 'selected' : ''}" data-model="${escapeHtml(m.id)}">${escapeHtml(m.id)}</button>`;
-      });
-    }
-
     card.innerHTML = `
       <div class="agent-card-header">
         <div class="agent-title-box">
@@ -415,48 +424,99 @@ function renderTeamGrid(scan) {
         <label for="model-input-${escapeHtml(exp.name)}">设定/分配模型:</label>
         <div class="model-combobox">
           <input id="model-input-${escapeHtml(exp.name)}" type="search" class="model-select" data-agent="${escapeHtml(exp.name)}" value="${escapeHtml(selectedModel)}" placeholder="输入模型名称进行搜索" autocomplete="off" />
-          <div class="model-options" role="listbox">${selectOptions || '<span class="model-empty">未扫描到模型</span>'}</div>
         </div>
       </div>
     `;
 
     const selectEl = card.querySelector('.model-select');
-    const optionsEl = card.querySelector('.model-options');
-    const updateOptions = () => {
-      const query = selectEl.value.trim();
-      optionsEl.querySelectorAll('.model-option').forEach(option => {
-        option.hidden = Boolean(query && !fuzzyMatch(option.dataset.model, query));
-      });
-      optionsEl.classList.add('open');
-    };
-    selectEl.addEventListener('focus', updateOptions);
+    selectEl.addEventListener('focus', () => openModelPicker(selectEl, exp.name));
     selectEl.addEventListener('input', () => {
       appState.selectedModels[exp.name] = selectEl.value.trim();
-      updateOptions();
+      openModelPicker(selectEl, exp.name);
     });
-    optionsEl.querySelectorAll('.model-option').forEach(option => {
-      option.addEventListener('mousedown', event => event.preventDefault());
-      option.addEventListener('click', () => {
-        selectEl.value = option.dataset.model;
-        appState.selectedModels[exp.name] = option.dataset.model;
-        optionsEl.classList.remove('open');
-      });
-    });
-    selectEl.addEventListener('blur', () => setTimeout(() => optionsEl.classList.remove('open'), 120));
+    selectEl.addEventListener('blur', scheduleCloseModelPicker);
 
     container.appendChild(card);
   });
 }
 
+function openModelPicker(input, agentName) {
+  const panel = document.getElementById('shared-model-options');
+  if (!panel) return;
+  clearTimeout(appState.modelPickerTimer);
+  appState.activeModelInput = input;
+  appState.activeModelAgent = agentName;
+  const rect = input.getBoundingClientRect();
+  panel.style.left = `${Math.max(8, rect.left)}px`;
+  panel.style.top = `${rect.bottom + 4}px`;
+  panel.style.width = `${rect.width}px`;
+  panel.classList.add('open');
+  renderSharedModelOptions(input.value);
+}
+
+function renderSharedModelOptions(query) {
+  const panel = document.getElementById('shared-model-options');
+  if (!panel) return;
+  const tokens = parseSearchTokens(query);
+  const matches = appState.modelIndex.filter(model => {
+    return tokens.every(token => {
+      if (model.searchText.includes(token)) return true;
+      let cursor = 0;
+      for (const character of token) {
+        cursor = model.searchText.indexOf(character, cursor);
+        if (cursor === -1) return false;
+        cursor += 1;
+      }
+      return true;
+    });
+  }).slice(0, 100);
+  const groups = {};
+  matches.forEach(model => (groups[model.provider] ||= []).push(model));
+  panel.textContent = '';
+  Object.entries(groups).forEach(([provider, models]) => {
+    const heading = document.createElement('div');
+    heading.className = 'model-provider-label';
+    heading.textContent = `Provider: ${provider}`;
+    panel.appendChild(heading);
+    models.forEach(model => {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'model-option';
+      option.dataset.model = model.id;
+      option.textContent = model.id;
+      if (appState.activeModelInput && appState.activeModelInput.value === model.id) option.classList.add('selected');
+      panel.appendChild(option);
+    });
+  });
+  if (!matches.length) {
+    const empty = document.createElement('span');
+    empty.className = 'model-empty';
+    empty.textContent = '没有匹配的模型';
+    panel.appendChild(empty);
+  }
+}
+
+function scheduleCloseModelPicker() {
+  clearTimeout(appState.modelPickerTimer);
+  appState.modelPickerTimer = setTimeout(() => {
+    document.getElementById('shared-model-options')?.classList.remove('open');
+  }, 150);
+}
+
 function filterModelOptions(query) {
   const q = query.trim();
   document.querySelectorAll('.agent-card').forEach(card => {
-    const modelMatch = [...card.querySelectorAll('.model-option')]
-      .some(option => fuzzyMatch(option.dataset.model, q));
+    const modelMatch = appState.modelIndex.some(model => fuzzyMatch(model.id, q));
     card.hidden = Boolean(q && !fuzzyMatch(card.textContent, q) && !modelMatch);
-    card.querySelectorAll('.model-option').forEach(option => {
-      option.hidden = Boolean(q && !fuzzyMatch(option.dataset.model, q));
-    });
+  });
+  if (appState.activeModelInput) renderSharedModelOptions(appState.activeModelInput.value);
+}
+
+function scheduleModelFilter(query) {
+  if (appState.searchFrame) cancelAnimationFrame(appState.searchFrame);
+  appState.searchFrame = requestAnimationFrame(() => {
+    appState.searchFrame = null;
+    filterModelOptions(query);
   });
 }
 

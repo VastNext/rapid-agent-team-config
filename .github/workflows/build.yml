@@ -5,6 +5,7 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -34,6 +35,9 @@ jobs:
       - name: Verify frontend (HTML/JS static checks)
         run: node tests/verify_frontend.js
 
+      - name: Run synthetic frontend performance baseline
+        run: node tests/perf-baseline.js
+
       - name: Install Linux Dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
@@ -47,10 +51,10 @@ jobs:
         run: cargo fmt -- --check
 
       - name: Run cargo clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Run cargo check
-        run: cargo check --verbose
+        run: cargo check --locked --verbose
 
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --verbose --locked

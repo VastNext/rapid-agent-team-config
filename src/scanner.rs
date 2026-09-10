@@ -75,6 +75,12 @@ pub const RAPID_TEAM_AGENTS: &[&str] = &[
     "rapid-architect",
 ];
 
+fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
+}
+
 /// Resolves global OpenCode config directory with environment variable priority
 pub fn get_global_opencode_dir() -> PathBuf {
     // 1. OPENCODE_CONFIG_DIR env
@@ -154,7 +160,7 @@ pub fn scan_environment_with_paths(
                 if primary_config_path.is_none() {
                     primary_config_path = Some(path.clone());
                 }
-                config_files_to_read.push(path.clone());
+                push_unique_path(&mut config_files_to_read, path.clone());
             }
         }
     } else if target_scope == "project" {
@@ -170,7 +176,7 @@ pub fn scan_environment_with_paths(
                     if primary_config_path.is_none() {
                         primary_config_path = Some(cand.clone());
                     }
-                    config_files_to_read.push(cand.clone());
+                    push_unique_path(&mut config_files_to_read, cand.clone());
                 }
             }
         }
@@ -179,23 +185,23 @@ pub fn scan_environment_with_paths(
         let g_jsonc = global_dir.join("opencode.jsonc");
         let g_json = global_dir.join("opencode.json");
         if g_json.exists() {
-            config_files_to_read.push(g_json);
+            push_unique_path(&mut config_files_to_read, g_json);
         }
         if g_jsonc.exists() {
-            config_files_to_read.push(g_jsonc);
+            push_unique_path(&mut config_files_to_read, g_jsonc);
         }
     } else {
         let json_path = base_dir.join("opencode.json");
         let jsonc_path = base_dir.join("opencode.jsonc");
         if json_path.exists() {
             primary_config_path = Some(json_path.clone());
-            config_files_to_read.push(json_path);
+            push_unique_path(&mut config_files_to_read, json_path);
         }
         if jsonc_path.exists() {
             if primary_config_path.is_none() {
                 primary_config_path = Some(jsonc_path.clone());
             }
-            config_files_to_read.push(jsonc_path);
+            push_unique_path(&mut config_files_to_read, jsonc_path);
         }
     }
 
@@ -256,6 +262,7 @@ pub fn scan_environment_with_paths(
     // 3. Scan agents (Project agents take precedence over Global agents)
     let mut found_agents: BTreeMap<String, AgentStatus> = BTreeMap::new();
 
+    let global_dir = get_global_opencode_dir();
     let scan_dirs = if target_scope == "project" {
         let p = project_path.unwrap_or_else(|| Path::new(""));
         vec![
@@ -263,8 +270,8 @@ pub fn scan_environment_with_paths(
             (p.join(".opencode").join("agent"), "project"),
             (p.join("agents"), "project"),
             (p.join("agent"), "project"),
-            (get_global_opencode_dir().join("agents"), "global"),
-            (get_global_opencode_dir().join("agent"), "global"),
+            (global_dir.join("agents"), "global"),
+            (global_dir.join("agent"), "global"),
         ]
     } else {
         vec![
@@ -382,18 +389,10 @@ pub fn scan_environment_with_paths(
 
     let command_file = base_dir.join("commands").join("rapid-dev.md");
     let command_installed = command_file.exists()
-        || (target_scope == "project"
-            && get_global_opencode_dir()
-                .join("commands")
-                .join("rapid-dev.md")
-                .exists());
+        || (target_scope == "project" && global_dir.join("commands").join("rapid-dev.md").exists());
     let skill_dir = base_dir.join("skills").join("rapid-dev-team");
     let skill_installed = skill_dir.exists()
-        || (target_scope == "project"
-            && get_global_opencode_dir()
-                .join("skills")
-                .join("rapid-dev-team")
-                .exists());
+        || (target_scope == "project" && global_dir.join("skills").join("rapid-dev-team").exists());
 
     let is_installed_complete = missing_agents.is_empty() && command_installed && skill_installed;
     let is_installed_partial = installed_count > 0 || command_installed || skill_installed;
