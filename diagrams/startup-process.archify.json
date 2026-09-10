@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Rapid Agent Team Configurator 启动过程",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "diagrams/startup-process.html",
+    "views": [
+      { "id": "nativeBoot", "label": "原生启动", "focus": ["exe", "bundle", "shell", "webview"], "note": "从可执行文件、内嵌资源到原生窗口和 WebView。" },
+      { "id": "safeScan", "label": "授权扫描", "focus": ["webview", "consent", "ready"], "note": "确认前不读取配置；确认后通过 IPC 扫描并渲染状态。" }
+    ]
+  },
+  "lanes": [
+    { "id": "build", "label": "构建期" },
+    { "id": "native", "label": "Rust 原生运行时" },
+    { "id": "webview", "label": "内嵌 WebView 前端" }
+  ],
+  "phases": [
+    { "id": "package", "label": "打包", "fromCol": 0, "toCol": 1 },
+    { "id": "boot", "label": "启动", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "authorize", "label": "授权与就绪", "fromCol": 4, "toCol": 5, "variant": "security" }
+  ],
+  "mainPath": ["exe", "bundle", "shell", "webview", "consent", "ready"],
+  "nodes": [
+    { "id": "exe", "lane": "build", "col": 0, "type": "backend", "label": "启动可执行文件", "sublabel": "Rust 桌面程序", "tag": "Cargo bin", "width": 140 },
+    { "id": "bundle", "lane": "build", "col": 1, "type": "frontend", "label": "编译期嵌入资源", "sublabel": "HTML / CSS / JS / 图标", "width": 140 },
+    { "id": "shell", "lane": "native", "col": 2, "type": "backend", "label": "初始化原生壳", "sublabel": "EventLoop + Window + app://", "tag": "Tao / Wry", "width": 146 },
+    { "id": "webview", "lane": "webview", "col": 3, "type": "frontend", "label": "加载前端首屏", "sublabel": "index.html → DOMContentLoaded", "width": 146 },
+    { "id": "consent", "lane": "webview", "col": 4, "type": "security", "label": "等待用户确认", "sublabel": "明确读取范围；默认不扫描", "tag": "安全门禁", "width": 146 },
+    { "id": "ready", "lane": "webview", "col": 5, "type": "frontend", "label": "渲染并驻留", "sublabel": "状态页可用；事件循环等待", "width": 140 }
+  ],
+  "edges": [
+    { "id": "run", "from": "exe", "to": "bundle", "label": "系统加载二进制", "variant": "emphasis" },
+    { "id": "assets", "from": "bundle", "to": "shell", "label": "include_str! / include_bytes!", "variant": "emphasis" },
+    { "id": "openWebview", "from": "shell", "to": "webview", "label": "打开 app://localhost/index.html", "variant": "emphasis" },
+    { "id": "showConsent", "from": "webview", "to": "consent", "label": "绑定事件并显示确认页", "variant": "emphasis" },
+    { "id": "authorized", "from": "consent", "to": "ready", "label": "确认后刷新状态", "variant": "emphasis" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "关键结论", "items": ["启动时内嵌并加载前端资源，注册 app:// 协议与 IPC 白名单", "确认前不读取配置；确认后才加载代理偏好并扫描 OpenCode", "扫描结果渲染 9 成员状态，事件循环驻留直到窗口关闭"] }
+  ]
+}
