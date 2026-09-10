@@ -14,6 +14,8 @@ if (!fs.existsSync(htmlPath) || !fs.existsSync(jsPath) || !fs.existsSync(cssPath
 
 const html = fs.readFileSync(htmlPath, 'utf8');
 const js = fs.readFileSync(jsPath, 'utf8');
+const mainPath = path.join(__dirname, '../src/main.rs');
+const mainRs = fs.readFileSync(mainPath, 'utf8');
 
 console.log("=== 2. Checking XSS & HTML escaping ===");
 if (!js.includes('escapeHtml(')) {
@@ -140,6 +142,13 @@ if (!html.includes('consent-screen') || !html.includes('config-path-input') ||
     !html.includes('btn-confirm-scan') || !js.includes('scanConfirmed') ||
     !js.includes('config_paths') || !js.includes('scan_environment')) {
   console.error("Missing pre-scan consent gate or explicit config path flow!");
+  process.exit(1);
+}
+
+console.log("=== 13. Checking Windows GUI subsystem and hidden WebView startup ===");
+if (!mainRs.includes('windows_subsystem') || !mainRs.includes('.with_visible(false)') ||
+    !mainRs.includes('PageLoadEvent::Finished')) {
+  console.error("Missing Windows GUI subsystem or hidden-until-loaded startup guard!");
   process.exit(1);
 }
 const initialLoadBlock = js.match(/DOMContentLoaded[\s\S]*?\n\}\);/)?.[0] || '';

@@ -1,8 +1,10 @@
 # Rapid Agent Team Configurator
 
-跨平台、轻量级、无 Node.js 运行时依赖的 **Rapid Agent Team** 桌面图形化配置与安装向导工具（基于 Rust + wry/tao + 原生前端技术构建）。当前版本为 `v0.1.10`，恢复多平台发布前暂以 Windows x64 为主。
+跨平台、轻量级、无 Node.js 运行时依赖的 **Rapid Agent Team** 桌面图形化配置与安装向导工具（基于 Rust + wry/tao + 原生前端技术构建）。当前版本为 `v0.1.11`。
 
 Windows GUI 使用 Windows 子系统启动，不会额外打开 CMD 控制台窗口。应用在前置配置访问确认前不读取 OpenCode 配置或应用本地配置；确认后才加载扫描和代理配置。
+
+WebView 初始化期间窗口保持隐藏，首个页面完成加载后才显示，避免启动时出现长时间白屏。
 
 > Windows 版本当前未配置 Authenticode 代码签名证书，首次下载运行时可能出现 SmartScreen“未知发布者”提示。请从本仓库 Release 下载并核对同目录 `.sha256` 文件；这不是应用运行时读取凭据或执行不受信任脚本造成的提示。后续配置签名证书后再消除该系统提示。
 

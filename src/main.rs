@@ -18,12 +18,16 @@ use std::path::{Path, PathBuf};
 use tao::{
     dpi::LogicalSize,
     event::{Event, StartCause, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::{ControlFlow, EventLoopBuilder},
     window::WindowBuilder,
 };
-use wry::{http::Response, WebViewBuilder};
+use wry::{http::Response, PageLoadEvent, WebViewBuilder};
 
 const ICON_PNG: &[u8] = include_bytes!("../assets/icon.png");
+
+enum UserEvent {
+    ShowWindow,
+}
 
 fn load_window_icon() -> Option<tao::window::Icon> {
     let decoder = png::Decoder::new(Cursor::new(ICON_PNG));
@@ -294,10 +298,13 @@ fn handle_ipc_request(msg: IpcMessage) -> IpcResponse<serde_json::Value> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let event_loop = EventLoop::new();
+    let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
+    let event_proxy = event_loop.create_proxy();
     let window = WindowBuilder::new()
         .with_title("Rapid Agent Team Configurator")
         .with_window_icon(load_window_icon())
+        // WebView2 初始化期间隐藏窗口，避免用户看到长时间白屏。
+        .with_visible(false)
         .with_inner_size(LogicalSize::new(1040.0, 720.0))
         .with_min_inner_size(LogicalSize::new(800.0, 560.0))
         .build(&event_loop)?;
@@ -306,6 +313,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let css_content = include_str!("frontend/style.css");
     let js_content = include_str!("frontend/app.js");
     let icon_content = include_bytes!("../assets/icon.png");
+    let show_window_proxy = event_proxy.clone();
 
     let builder = WebViewBuilder::new()
         .with_custom_protocol("app".into(), move |_webview_id, request| {
@@ -348,6 +356,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .unwrap(),
             }
         })
+        .with_on_page_load_handler(move |event, _url| {
+            if matches!(event, PageLoadEvent::Finished) {
+                let _ = show_window_proxy.send_event(UserEvent::ShowWindow);
+            }
+        })
         .with_url("app://localhost/index.html");
 
     #[cfg(any(
@@ -376,6 +389,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match event {
             Event::NewEvents(StartCause::Init) => {}
+            Event::UserEvent(UserEvent::ShowWindow) => window.set_visible(true),
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
