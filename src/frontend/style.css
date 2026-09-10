@@ -44,6 +44,21 @@ body {
   height: 100vh;
 }
 
+.consent-screen { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: #0f172a; }
+.consent-card { width: min(680px, 100%); padding: 32px; background: #1e293b; border: 1px solid #475569; border-radius: 16px; box-shadow: 0 24px 70px rgba(0,0,0,.45); }
+.consent-mark img { width: 52px; height: 52px; border-radius: 14px; display: block; }
+.eyebrow { margin-top: 18px; color: #93c5fd; font: 700 11px var(--font-mono); letter-spacing: .12em; }
+.consent-card h1 { margin-top: 8px; font-size: 28px; color: #f8fafc; }
+.consent-lead { margin: 8px 0 22px; color: #cbd5e1; font-size: 15px; }
+.consent-list { display: grid; grid-template-columns: 120px 1fr; gap: 8px 12px; margin-bottom: 22px; padding: 14px; background: #0f172a; border-radius: 10px; color: #cbd5e1; font-size: 13px; }
+.consent-list strong { color: #f8fafc; }
+.consent-label { display: block; margin-bottom: 6px; color: #cbd5e1; font-size: 13px; }
+.path-entry { display: flex; gap: 8px; }
+.path-entry .form-input { flex: 1; }
+.config-path-list { display: flex; flex-wrap: wrap; gap: 6px; min-height: 28px; margin-top: 10px; color: #94a3b8; font: 11px var(--font-mono); }
+.config-path-chip { padding: 5px 8px; background: #0f172a; border: 1px solid #475569; border-radius: 6px; }
+.consent-actions { display: flex; justify-content: flex-end; margin-top: 24px; }
+
 /* Header */
 .app-header {
   display: flex;

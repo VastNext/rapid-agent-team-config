@@ -8,6 +8,30 @@
 </head>
 <body>
   <div class="app-container">
+    <section id="consent-screen" class="consent-screen">
+      <div class="consent-card">
+        <div class="consent-mark"><img src="icon.png" alt="VastNext" /></div>
+        <p class="eyebrow">RAPID AGENT TEAM CONFIGURATOR</p>
+        <h1>先确认配置来源</h1>
+        <p class="consent-lead">应用不会在启动时自动扫描 OpenCode。请先选择你希望检查的正式配置文件。</p>
+        <div class="consent-list">
+          <strong>确认后将读取</strong>
+          <span>Provider 名称、Model 名称、Agent 文件名和模型绑定</span>
+          <strong>不会读取</strong>
+          <span>API Key、Token、OAuth、Cookie 或 Provider 凭据内容</span>
+        </div>
+        <label class="consent-label" for="config-path-input">OpenCode 配置文件路径（可选）</label>
+        <div class="path-entry">
+          <input id="config-path-input" class="form-input" type="text" placeholder="例如：~/.config/opencode/opencode.jsonc" autocomplete="off" />
+          <button id="btn-select-config-path" class="btn btn-secondary">选择文件</button>
+          <button id="btn-add-config-path" class="btn btn-secondary">增加路径</button>
+        </div>
+        <div id="config-path-list" class="config-path-list"><span>未指定时，使用平台默认配置目录。</span></div>
+        <div class="consent-actions">
+          <button id="btn-confirm-scan" class="btn btn-primary">确认并开始扫描</button>
+        </div>
+      </div>
+    </section>
     <!-- Header -->
     <header class="app-header">
       <div class="header-brand">
@@ -49,7 +73,7 @@
       <div id="tab-config" class="tab-pane active">
         <div class="pane-toolbar">
           <div class="search-box">
-            <input type="search" id="model-filter-input" placeholder="🔍 筛选成员和模型 (如 glm-4, deepseek, gpt-4o, claude...)" autocomplete="off" />
+            <input type="search" id="model-filter-input" placeholder="🔍 模糊搜索成员、角色或模型 (如 zhipu glm53)" autocomplete="off" />
           </div>
           <div class="toolbar-actions">
             <button id="btn-batch-apply-default" class="btn btn-secondary btn-sm" title="根据成员专长快速分配已注册模型">⚡ 智能预设匹配</button>

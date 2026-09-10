@@ -10,7 +10,9 @@ let appState = {
     proxy_url: 'http://127.0.0.1:7890'
   },
   currentPlan: null,
-  latestRelease: null
+  latestRelease: null,
+  configPaths: [],
+  scanConfirmed: false
 };
 
 // Safe HTML escaping helper
@@ -127,8 +129,9 @@ function fuzzyMatch(value, query) {
 // Initial Load
 window.addEventListener('DOMContentLoaded', async () => {
   setupEventHandlers();
+  // 前置确认通过前不读取 OpenCode 配置。
   await loadSavedAppConfig();
-  refreshState();
+  renderConfigPathList();
 });
 
 async function loadSavedAppConfig() {
@@ -191,6 +194,9 @@ function setupEventHandlers() {
   };
 
   safeBind('btn-refresh', 'click', refreshState);
+  safeBind('btn-confirm-scan', 'click', confirmScan);
+  safeBind('btn-select-config-path', 'click', chooseConfigPath);
+  safeBind('btn-add-config-path', 'click', addConfigPath);
   safeBind('btn-select-project', 'click', chooseProjectFolder);
   safeBind('btn-install-wizard', 'click', () => {
     const tabInstallBtn = document.querySelector('[data-tab="tab-install"]');
@@ -227,10 +233,12 @@ function setupEventHandlers() {
 }
 
 async function refreshState() {
+  if (!appState.scanConfirmed) return;
   try {
     const res = await callRust('scan_environment', {
       project_path: appState.projectPath,
       use_project: appState.selectedScope === 'project'
+      ,config_paths: appState.configPaths
     });
     appState.scanResult = res;
     renderStatusBanner(res);
@@ -238,6 +246,58 @@ async function refreshState() {
   } catch (err) {
     showToast(`扫描失败: ${err.message}`, 'error');
   }
+}
+
+async function chooseConfigPath() {
+  try {
+    const path = await callRust('select_file', { filter_ext: 'jsonc' });
+    if (path) {
+      const input = document.getElementById('config-path-input');
+      if (input) input.value = path;
+      addConfigPath();
+    }
+  } catch (err) {
+    showToast(`选择配置文件失败: ${err.message}`, 'error');
+  }
+}
+
+function addConfigPath() {
+  const input = document.getElementById('config-path-input');
+  const value = input ? input.value.trim() : '';
+  if (!value) {
+    showToast('请先输入或选择 opencode.json / opencode.jsonc 路径', 'warning');
+    return;
+  }
+  if (!/\\.(json|jsonc)$/i.test(value)) {
+    showToast('配置路径必须指向 opencode.json 或 opencode.jsonc', 'warning');
+    return;
+  }
+  if (!appState.configPaths.includes(value)) appState.configPaths.push(value);
+  input.value = '';
+  renderConfigPathList();
+}
+
+function renderConfigPathList() {
+  const list = document.getElementById('config-path-list');
+  if (!list) return;
+  list.textContent = '';
+  if (appState.configPaths.length === 0) {
+    list.textContent = '未指定时，使用平台默认配置目录。';
+    return;
+  }
+  appState.configPaths.forEach(path => {
+    const chip = document.createElement('span');
+    chip.className = 'config-path-chip';
+    chip.textContent = path;
+    list.appendChild(chip);
+  });
+}
+
+function confirmScan() {
+  appState.scanConfirmed = true;
+  const consent = document.getElementById('consent-screen');
+  if (consent) consent.remove();
+  refreshState();
 }
 
 async function chooseProjectFolder() {
@@ -391,7 +451,12 @@ function renderTeamGrid(scan) {
 function filterModelOptions(query) {
   const q = query.trim();
   document.querySelectorAll('.agent-card').forEach(card => {
-    card.hidden = Boolean(q && !fuzzyMatch(card.textContent, q));
+    const modelMatch = [...card.querySelectorAll('.model-option')]
+      .some(option => fuzzyMatch(option.dataset.model, q));
+    card.hidden = Boolean(q && !fuzzyMatch(card.textContent, q) && !modelMatch);
+    card.querySelectorAll('.model-option').forEach(option => {
+      option.hidden = Boolean(q && !fuzzyMatch(option.dataset.model, q));
+    });
   });
 }
 

@@ -121,7 +121,12 @@ pub fn get_global_opencode_dir() -> PathBuf {
     PathBuf::from(".config/opencode")
 }
 
-pub fn scan_environment(project_path: Option<&Path>, use_project: bool) -> ScanResult {
+/// 按用户明确确认的配置文件路径扫描，避免猜测临时文件或备份文件。
+pub fn scan_environment_with_paths(
+    project_path: Option<&Path>,
+    use_project: bool,
+    explicit_config_paths: &[PathBuf],
+) -> ScanResult {
     let (target_scope, base_dir) = if use_project {
         match project_path {
             Some(p) => {
@@ -138,7 +143,21 @@ pub fn scan_environment(project_path: Option<&Path>, use_project: bool) -> ScanR
     let mut config_files_to_read = Vec::new();
     let mut primary_config_path = None;
 
-    if target_scope == "project" {
+    if !explicit_config_paths.is_empty() {
+        for path in explicit_config_paths {
+            if path.is_file()
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name == "opencode.json" || name == "opencode.jsonc")
+            {
+                if primary_config_path.is_none() {
+                    primary_config_path = Some(path.clone());
+                }
+                config_files_to_read.push(path.clone());
+            }
+        }
+    } else if target_scope == "project" {
         if let Some(p) = project_path {
             let candidates = [
                 p.join(".opencode").join("opencode.json"),

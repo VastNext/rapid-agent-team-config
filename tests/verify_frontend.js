@@ -134,6 +134,14 @@ if (!js.includes('VastNext/opencode-rapid-agent-team')) {
   console.error("Missing official default VastNext/opencode-rapid-agent-team repo!");
   process.exit(1);
 }
+
+console.log("=== 12. Checking consent gate and explicit config paths ===");
+if (!html.includes('consent-screen') || !html.includes('config-path-input') ||
+    !html.includes('btn-confirm-scan') || !js.includes('scanConfirmed') ||
+    !js.includes('config_paths') || !js.includes('scan_environment')) {
+  console.error("Missing pre-scan consent gate or explicit config path flow!");
+  process.exit(1);
+}
 // 缺少 Rapid Team 时安装向导应出现并引导（banner 文案 / 安装按钮）
 if (!js.includes('btn-install-wizard') || !js.includes('一键安装 Rapid Team')) {
   console.error("Install wizard entry missing when Rapid Team absent!");

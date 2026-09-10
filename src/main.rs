@@ -125,7 +125,18 @@ fn handle_ipc_request(msg: IpcMessage) -> IpcResponse<serde_json::Value> {
                 .and_then(|u| u.as_bool())
                 .unwrap_or(false);
             let project_path = project_path_str.map(Path::new);
-            let res = scanner::scan_environment(project_path, use_project);
+            let explicit_paths = payload
+                .get("config_paths")
+                .and_then(|paths| paths.as_array())
+                .map(|paths| {
+                    paths
+                        .iter()
+                        .filter_map(|path| path.as_str().map(PathBuf::from))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let res =
+                scanner::scan_environment_with_paths(project_path, use_project, &explicit_paths);
             (serde_json::to_value(res).ok(), None)
         }
         "select_folder" => {

@@ -7,7 +7,7 @@ use rapid_agent_team_config::jsonc::strip_jsonc_comments_and_trailing_commas;
 use rapid_agent_team_config::network::{
     is_allowed_download_url, is_allowed_repo_url, ALLOWED_REPOSITORIES, OFFICIAL_RAPID_TEAM_REPO,
 };
-use rapid_agent_team_config::scanner::scan_environment;
+use rapid_agent_team_config::scanner::scan_environment_with_paths;
 use rapid_agent_team_config::writer::{
     apply_model_changes, compute_backup_relative_path, compute_sha256_hex, generate_change_plan,
     ModelChangeItem,
@@ -436,7 +436,7 @@ fn test_same_basename_different_directories_backup_collision_free() {
 #[test]
 fn test_project_mode_strict_dot_opencode_target() {
     let dummy_project = Path::new("/workspace/my-app");
-    let scan = scan_environment(Some(dummy_project), true);
+    let scan = scan_environment_with_paths(Some(dummy_project), true, &[]);
     assert_eq!(scan.target_scope, "project");
     assert!(scan.opencode_dir.ends_with(".opencode"));
 }
@@ -664,7 +664,7 @@ fn test_scanner_extracts_providers_models_and_config_bindings() {
     let key = "OPENCODE_CONFIG_DIR";
     let old = env::var_os(key);
     env::set_var(key, &cfg_dir);
-    let scan = scan_environment(None, false);
+    let scan = scan_environment_with_paths(None, false, &[]);
     // 隔离目录应能被 get_global_opencode_dir 解析到（此时 env 仍指向受控目录）
     assert_eq!(get_global_opencode_dir(), cfg_dir);
     if let Some(o) = old {
