@@ -1,6 +1,6 @@
 [package]
 name = "rapid-agent-team-config"
-version = "0.1.12"
+version = "0.1.14"
 edition = "2021"
 description = "Cross-platform GUI configuration and installation wizard for Rapid Agent Team in OpenCode"
 authors = ["VastNext"]
@@ -34,6 +34,7 @@ windows = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsA
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+pollster = "0.4"
 
 [build-dependencies]
 winresource = "0.1"

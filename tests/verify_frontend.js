@@ -117,7 +117,7 @@ if (!js.includes('modelIndex') || !js.includes('slice(0, 100)')) {
   console.error("Model candidates must use one indexed, bounded shared list!");
   process.exit(1);
 }
-if (!mainRs.includes('MAX_IPC_TASKS') || !mainRs.includes('fetch_update')) {
+if (!mainRs.includes('MAX_NATIVE_IPC_TASKS') || !mainRs.includes('ipc_in_flight')) {
   console.error("IPC work must have a bounded in-flight task limit!");
   process.exit(1);
 }
@@ -157,7 +157,26 @@ if (!html.includes('consent-screen') || !html.includes('config-path-input') ||
   process.exit(1);
 }
 
-console.log("=== 13. Checking Windows GUI subsystem and hidden WebView startup ===");
+console.log("=== 13. Checking native IPC transport and visible scan failures ===");
+if (!js.includes("window.ipc.postMessage") || js.includes("fetch('/api/ipc'")) {
+  console.error("Desktop RPC must use Wry native IPC instead of custom-protocol fetch!");
+  process.exit(1);
+}
+if (js.includes('return { mock: true }') || !js.includes('扫描失败')) {
+  console.error("IPC failures must be visible and must not silently enter mock mode!");
+  process.exit(1);
+}
+if (!js.includes('nextCallbackId') || !js.includes('callbackSessionId') ||
+    !js.includes('actionsWithoutClientTimeout')) {
+  console.error("Native IPC needs collision-free callback IDs and safe long-running writes!");
+  process.exit(1);
+}
+if (!mainRs.includes('MUTATING_ACTIONS') || !mainRs.includes('write_lock()')) {
+  console.error("Mutating IPC operations must be serialized in the backend!");
+  process.exit(1);
+}
+
+console.log("=== 14. Checking Windows GUI subsystem and hidden WebView startup ===");
 if (!mainRs.includes('windows_subsystem') || !mainRs.includes('.with_visible(false)') ||
     !mainRs.includes('PageLoadEvent::Finished')) {
   console.error("Missing Windows GUI subsystem or hidden-until-loaded startup guard!");

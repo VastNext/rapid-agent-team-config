@@ -14,11 +14,9 @@ mod writer;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::io::Cursor;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
+use std::sync::{Mutex, OnceLock};
 use tao::{
     dpi::LogicalSize,
     event::{Event, StartCause, WindowEvent},
@@ -28,9 +26,26 @@ use tao::{
 use wry::{http::Response, PageLoadEvent, WebViewBuilder};
 
 const ICON_PNG: &[u8] = include_bytes!("../assets/icon-window.png");
+const MAX_NATIVE_IPC_TASKS: usize = 4;
+const MUTATING_ACTIONS: &[&str] = &[
+    "save_app_config",
+    "apply_model_changes",
+    "install_from_zip",
+    "install_from_local_dir",
+];
+
+fn write_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 enum UserEvent {
     ShowWindow,
+    IpcRequest(String),
+    IpcResponse {
+        callback_id: String,
+        response: IpcResponse<serde_json::Value>,
+    },
 }
 
 fn load_window_icon() -> Option<tao::window::Icon> {
@@ -44,8 +59,29 @@ fn load_window_icon() -> Option<tao::window::Icon> {
 #[derive(Debug, Deserialize)]
 struct IpcMessage {
     action: String,
+    #[serde(rename = "callbackId")]
+    callback_id: String,
     #[serde(default)]
     payload: serde_json::Value,
+}
+
+fn respond_to_javascript(
+    webview: &wry::WebView,
+    callback_id: &str,
+    response: &IpcResponse<serde_json::Value>,
+) {
+    if !callback_id
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return;
+    }
+    let callback = serde_json::to_string(callback_id).unwrap_or_else(|_| "\"\"".to_string());
+    let payload = serde_json::to_string(response)
+        .unwrap_or_else(|_| "{\"data\":null,\"error\":\"IPC 响应序列化失败\"}".to_string());
+    let script =
+        format!("if (typeof window[{callback}] === 'function') window[{callback}]({payload});");
+    let _ = webview.evaluate_script(&script);
 }
 
 #[derive(Debug, Serialize)]
@@ -111,6 +147,11 @@ fn handle_ipc_request(msg: IpcMessage) -> IpcResponse<serde_json::Value> {
             error: Some(format!("未受许可的 IPC 请求操作: {}", action)),
         };
     }
+    let _write_guard = MUTATING_ACTIONS.contains(&action).then(|| {
+        write_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    });
     let payload = msg.payload;
 
     let (data, error) = match action {
@@ -150,7 +191,7 @@ fn handle_ipc_request(msg: IpcMessage) -> IpcResponse<serde_json::Value> {
             (serde_json::to_value(res).ok(), None)
         }
         "select_folder" => {
-            let folder = rfd::FileDialog::new().pick_folder();
+            let folder = pick_folder();
             let path_str = folder.map(|p| p.to_string_lossy().to_string());
             (serde_json::to_value(path_str).ok(), None)
         }
@@ -159,9 +200,7 @@ fn handle_ipc_request(msg: IpcMessage) -> IpcResponse<serde_json::Value> {
                 .get("filter_ext")
                 .and_then(|f| f.as_str())
                 .unwrap_or("zip");
-            let file = rfd::FileDialog::new()
-                .add_filter("Archive", &[filter_ext])
-                .pick_file();
+            let file = pick_file(filter_ext);
             let path_str = file.map(|p| p.to_string_lossy().to_string());
             (serde_json::to_value(path_str).ok(), None)
         }
@@ -282,6 +321,9 @@ fn handle_ipc_request(msg: IpcMessage) -> IpcResponse<serde_json::Value> {
 
             match network::download_zip(url, &temp_zip, proxy_cfg.as_ref()) {
                 Ok(_) => {
+                    let _write_guard = write_lock()
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
                     let install_res = installer::install_from_zip(&temp_zip, Path::new(target_dir));
                     let _ = std::fs::remove_file(&temp_zip);
                     match install_res {
@@ -301,6 +343,37 @@ fn handle_ipc_request(msg: IpcMessage) -> IpcResponse<serde_json::Value> {
     IpcResponse { data, error }
 }
 
+#[cfg(target_os = "linux")]
+fn pick_folder() -> Option<PathBuf> {
+    pollster::block_on(rfd::AsyncFileDialog::new().pick_folder()).map(|file| file.path().to_owned())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pick_folder() -> Option<PathBuf> {
+    rfd::FileDialog::new().pick_folder()
+}
+
+#[cfg(target_os = "linux")]
+fn pick_file(filter_ext: &str) -> Option<PathBuf> {
+    pollster::block_on(
+        rfd::AsyncFileDialog::new()
+            .add_filter("Archive", &[filter_ext])
+            .pick_file(),
+    )
+    .map(|file| file.path().to_owned())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn pick_file(filter_ext: &str) -> Option<PathBuf> {
+    rfd::FileDialog::new()
+        .add_filter("Archive", &[filter_ext])
+        .pick_file()
+}
+
+fn dialog_requires_main_thread(action: &str) -> bool {
+    cfg!(not(target_os = "linux")) && matches!(action, "select_folder" | "select_file")
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let event_proxy = event_loop.create_proxy();
@@ -318,8 +391,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let js_content = include_str!("frontend/app.js");
     let icon_content = include_bytes!("../assets/icon.png");
     let show_window_proxy = event_proxy.clone();
-    let ipc_in_flight = Arc::new(AtomicUsize::new(0));
-    let ipc_limit = Arc::clone(&ipc_in_flight);
+    let ipc_proxy = event_proxy.clone();
 
     let builder = WebViewBuilder::new()
         .with_asynchronous_custom_protocol("app".into(), move |_webview_id, request, responder| {
@@ -345,53 +417,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .body(Cow::Borrowed(&icon_content[..]))
                     .map(|response| responder.respond(response))
                     .unwrap(),
-                "/api/ipc" => {
-                    const MAX_IPC_TASKS: usize = 4;
-                    let current =
-                        ipc_limit.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                            (count < MAX_IPC_TASKS).then_some(count + 1)
-                        });
-                    if current.is_err() {
-                        let response = Response::builder()
-                            .status(429)
-                            .header("Content-Type", "application/json; charset=utf-8")
-                            .body(Cow::Owned(
-                                serde_json::json!({
-                                    "data": null,
-                                    "error": "任务过多，请稍后重试"
-                                })
-                                .to_string()
-                                .into_bytes(),
-                            ))
-                            .unwrap();
-                        responder.respond(response);
-                        return;
-                    }
-                    let req_body = request.body().to_vec();
-                    let task_counter = Arc::clone(&ipc_limit);
-                    std::thread::spawn(move || {
-                        let resp_obj = match serde_json::from_slice::<IpcMessage>(&req_body) {
-                            Ok(msg) => handle_ipc_request(msg),
-                            Err(e) => IpcResponse {
-                                data: None,
-                                error: Some(format!("IPC JSON 解析错误: {}", e)),
-                            },
-                        };
-                        let resp_bytes = serde_json::to_vec(&resp_obj).unwrap_or_default();
-                        let response = Response::builder()
-                            .header("Content-Type", "application/json; charset=utf-8")
-                            .body(Cow::Owned(resp_bytes))
-                            .unwrap();
-                        responder.respond(response);
-                        task_counter.fetch_sub(1, Ordering::AcqRel);
-                    });
-                }
                 _ => Response::builder()
                     .status(404)
                     .body(Cow::Borrowed(&b"Not Found"[..]))
                     .map(|response| responder.respond(response))
                     .unwrap(),
             }
+        })
+        .with_ipc_handler(move |request| {
+            let _ = ipc_proxy.send_event(UserEvent::IpcRequest(request.body().clone()));
         })
         .with_on_page_load_handler(move |event, _url| {
             if matches!(event, PageLoadEvent::Finished) {
@@ -406,7 +440,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         target_os = "ios",
         target_os = "android"
     ))]
-    let _webview = builder.build(&window)?;
+    let webview = builder.build(&window)?;
 
     #[cfg(not(any(
         target_os = "windows",
@@ -414,19 +448,66 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         target_os = "ios",
         target_os = "android"
     )))]
-    let _webview = {
+    let webview = {
         use tao::platform::unix::WindowExtUnix;
         use wry::WebViewBuilderExtUnix;
         let vbox = window.default_vbox().unwrap();
         builder.build_gtk(vbox)?
     };
 
+    let mut ipc_in_flight = 0usize;
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
 
         match event {
             Event::NewEvents(StartCause::Init) => {}
             Event::UserEvent(UserEvent::ShowWindow) => window.set_visible(true),
+            Event::UserEvent(UserEvent::IpcRequest(body)) => {
+                let parsed = serde_json::from_str::<IpcMessage>(&body);
+                match parsed {
+                    Ok(message) if ipc_in_flight >= MAX_NATIVE_IPC_TASKS => {
+                        let response = IpcResponse {
+                            data: None,
+                            error: Some("任务过多，请稍后重试".to_string()),
+                        };
+                        respond_to_javascript(&webview, &message.callback_id, &response);
+                    }
+                    Ok(message) if dialog_requires_main_thread(&message.action) => {
+                        ipc_in_flight += 1;
+                        let callback_id = message.callback_id.clone();
+                        let response = handle_ipc_request(message);
+                        respond_to_javascript(&webview, &callback_id, &response);
+                        ipc_in_flight -= 1;
+                    }
+                    Ok(message) => {
+                        ipc_in_flight += 1;
+                        let callback_id = message.callback_id.clone();
+                        let response_proxy = event_proxy.clone();
+                        std::thread::spawn(move || {
+                            let response =
+                                catch_unwind(AssertUnwindSafe(|| handle_ipc_request(message)))
+                                    .unwrap_or_else(|_| IpcResponse {
+                                        data: None,
+                                        error: Some("后台任务异常终止".to_string()),
+                                    });
+                            let _ = response_proxy.send_event(UserEvent::IpcResponse {
+                                callback_id,
+                                response,
+                            });
+                        });
+                    }
+                    Err(error) => {
+                        eprintln!("IPC JSON 解析错误: {error}");
+                    }
+                }
+            }
+            Event::UserEvent(UserEvent::IpcResponse {
+                callback_id,
+                response,
+            }) => {
+                respond_to_javascript(&webview, &callback_id, &response);
+                ipc_in_flight = ipc_in_flight.saturating_sub(1);
+            }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..

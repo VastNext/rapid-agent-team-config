@@ -1,7 +1,7 @@
-rapid-agent-team-config (0.1.12-1) unstable; urgency=medium
+rapid-agent-team-config (0.1.14-1) unstable; urgency=medium
 
-  * Initial stable release with deb packaging support.
-  * Cross-platform GUI for OpenCode Rapid Agent Team model configuration.
-  * Zero-credential security guarantee for API keys.
+  * Fix native IPC requests hanging on Debian WebKitGTK.
+  * Serialize mutating operations and avoid false write timeouts.
+  * Keep Linux file dialogs off the Tao event loop.
 
  -- VastNext <contact@vastnext.com>  Mon, 14 Sep 2026 00:00:00 +0000

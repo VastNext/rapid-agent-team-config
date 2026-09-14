@@ -20,6 +20,19 @@ let appState = {
   searchFrame: null
 };
 
+let nextCallbackId = 0;
+const callbackSessionId = (globalThis.crypto?.randomUUID?.() ||
+  `${Date.now()}_${Math.random().toString(36).slice(2)}`).replace(/[^a-zA-Z0-9_]/g, '');
+const actionsWithoutClientTimeout = new Set([
+  'save_app_config',
+  'apply_model_changes',
+  'install_from_zip',
+  'install_from_local_dir',
+  'download_and_install_release',
+  'select_file',
+  'select_folder'
+]);
+
 // Safe HTML escaping helper
 function escapeHtml(str) {
   if (str === null || str === undefined) return '';
@@ -58,41 +71,28 @@ async function copyToClipboard(text, successMsg = '已复制到剪贴板') {
 
 // Safe RPC invoker to Rust backend
 async function callRust(action, payload = {}) {
-  try {
-    const resp = await fetch('/api/ipc', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ action, payload })
-    });
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-    }
-    const json = await resp.json();
-    if (json.error) {
-      throw new Error(json.error);
-    }
-    return json.data;
-  } catch (fetchErr) {
-    // Fallback to window.ipc if running under legacy IPC shim
-    if (window.ipc) {
-      return new Promise((resolve, reject) => {
-        const callbackId = 'cb_' + Date.now() + '_' + Math.floor(Math.random() * 10000);
-        window[callbackId] = function(res) {
-          delete window[callbackId];
-          if (res.error) {
-            reject(new Error(res.error));
-          } else {
-            resolve(res.data);
-          }
-        };
-        window.ipc.postMessage(JSON.stringify({ action, callbackId, payload }));
-      });
-    }
-    console.warn("IPC not available, running in mock/browser mode", action, payload);
-    return { mock: true };
+  if (!window.ipc || typeof window.ipc.postMessage !== 'function') {
+    throw new Error('桌面 IPC 通道不可用');
   }
+
+  return new Promise((resolve, reject) => {
+    const callbackId = `cb_${callbackSessionId}_${++nextCallbackId}`;
+    const timer = actionsWithoutClientTimeout.has(action) ? null : setTimeout(() => {
+        delete window[callbackId];
+        reject(new Error(`操作超时 (${action})`));
+      }, 30000);
+
+    window[callbackId] = function(res) {
+      if (timer) clearTimeout(timer);
+      delete window[callbackId];
+      if (res.error) {
+        reject(new Error(res.error));
+      } else {
+        resolve(res.data);
+      }
+    };
+    window.ipc.postMessage(JSON.stringify({ action, callbackId, payload }));
+  });
 }
 
 function showToast(message, type = 'info') {
@@ -265,8 +265,21 @@ async function refreshState() {
     renderStatusBanner(res);
     renderTeamGrid(res);
   } catch (err) {
+    renderScanError(err);
     showToast(`扫描失败: ${err.message}`, 'error');
   }
+}
+
+function renderScanError(err) {
+  const banner = document.getElementById('banner-section');
+  const icon = document.getElementById('banner-icon');
+  const title = document.getElementById('banner-title');
+  const desc = document.getElementById('banner-desc');
+  if (!banner || !icon || !title || !desc) return;
+  banner.className = 'banner-card uninstalled';
+  icon.textContent = '❌';
+  title.textContent = '扫描 OpenCode 配置失败';
+  desc.textContent = err && err.message ? err.message : '未知错误';
 }
 
 async function chooseConfigPath() {
@@ -319,7 +332,7 @@ async function confirmScan() {
   const consent = document.getElementById('consent-screen');
   if (consent) consent.remove();
   await loadSavedAppConfig();
-  refreshState();
+  await refreshState();
 }
 
 async function chooseProjectFolder() {

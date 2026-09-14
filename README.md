@@ -1,6 +1,6 @@
 # Rapid Agent Team Configurator
 
-跨平台、轻量级、无 Node.js 运行时依赖的 **Rapid Agent Team** 桌面图形化配置与安装向导工具（基于 Rust + wry/tao + 原生前端技术构建）。当前版本为 `v0.1.12`。
+跨平台、轻量级、无 Node.js 运行时依赖的 **Rapid Agent Team** 桌面图形化配置与安装向导工具（基于 Rust + wry/tao + 原生前端技术构建）。当前版本为 `v0.1.14`。
 
 Windows GUI 使用 Windows 子系统启动，不会额外打开 CMD 控制台窗口。应用在前置配置访问确认前不读取 OpenCode 配置或应用本地配置；确认后才加载扫描和代理配置。
 
@@ -83,9 +83,9 @@ cargo deb --deb-version $(cargo metadata --no-deps --format-version 1 --quiet | 
 ### 安装 .deb 包
 
 ```bash
-sudo dpkg -i debian/rapid-agent-team-config_0.1.12-1_amd64.deb
+sudo dpkg -i debian/rapid-agent-team-config_0.1.14-1_amd64.deb
 # 或
-sudo apt install -y ./debian/rapid-agent-team-config_0.1.12-1_amd64.deb
+sudo apt install -y ./debian/rapid-agent-team-config_0.1.14-1_amd64.deb
 ```
 
 ---
