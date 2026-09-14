@@ -73,6 +73,19 @@ cargo run
 
 # 构建发布单文件可执行程序
 cargo build --release
+
+# 构建 Debian .deb 安装包（需要安装 cargo-deb）
+cargo install cargo-deb
+cargo deb --deb-version $(cargo metadata --no-deps --format-version 1 --quiet | python3 -c "import sys,json; print(json.load(sys.stdin)['packages'][0]['version'])")-1
+# 产物：debian/rapid-agent-team-config_<version>-1_amd64.deb
+```
+
+### 安装 .deb 包
+
+```bash
+sudo dpkg -i debian/rapid-agent-team-config_0.1.12-1_amd64.deb
+# 或
+sudo apt install -y ./debian/rapid-agent-team-config_0.1.12-1_amd64.deb
 ```
 
 ---
