@@ -54,3 +54,20 @@ authors = ["VastNext"]
 category = "Utility"
 license-file = "LICENSE"
 icons = ["assets/icon.png"]
+
+[package.metadata.deb]
+name = "rapid-agent-team-config"
+section = "utils"
+priority = "optional"
+depends = "libwebkit2gtk-4.1-0 (>= 2.38), libgtk-3-0 (>= 3.22)"
+assets = [
+  ["target/release/RapidAgentTeamConfig", "usr/bin/", "755"],
+  ["assets/icon.png", "usr/share/icons/hicolor/1024x1024/apps/com.vastnext.rapid-agent-team-config.png", "644"],
+  ["assets/RapidAgentTeamConfig.desktop", "usr/share/applications/", "644"],
+]
+extended-description = """\
+Desktop GUI configuration tool for OpenCode's Rapid Agent Team.\
+\n\nAllows visual model search, assignment, and installation wizard\
+\nfor the 9-agent heterogeneous development team system.\
+"""
+maintainer = "VastNext <contact@vastnext.com>"

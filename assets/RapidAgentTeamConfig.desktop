@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Rapid Agent Team Config
+Comment=Rapid Agent Team configuration tool for OpenCode
+Exec=/usr/bin/RapidAgentTeamConfig
+Icon=com.vastnext.rapid-agent-team-config
+Terminal=false
+Type=Application
+Categories=Development;Utility;
+MimeType=text/x-rust;

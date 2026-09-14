@@ -111,3 +111,52 @@ jobs:
             ${{ matrix.asset_name }}.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-deb:
+    name: Build Debian Package
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-release
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js (for frontend checks)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Verify frontend
+        run: node tests/verify_frontend.js
+
+      - name: Install Debian build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev dh-make debhelper
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb --locked
+
+      - name: Build Debian package
+        run: |
+          DEB_VERSION=$(cargo metadata --no-deps --format-version 1 --quiet | python3 -c "import sys,json; print(json.load(sys.stdin)['packages'][0]['version'])")
+          cargo deb --deb-version "${DEB_VERSION}-1" --output debian/
+          echo "DEB_VERSION=${DEB_VERSION}" >> $GITHUB_ENV
+
+      - name: Generate SHA256 checksum
+        run: |
+          sha256sum debian/rapid-agent-team-config_${{ env.DEB_VERSION }}-1_amd64.deb \
+            > debian/rapid-agent-team-config_${{ env.DEB_VERSION }}-1_amd64.deb.sha256
+
+      - name: Upload deb to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            debian/rapid-agent-team-config_${{ env.DEB_VERSION }}-1_amd64.deb
+            debian/rapid-agent-team-config_${{ env.DEB_VERSION }}-1_amd64.deb.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

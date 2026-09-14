@@ -1,0 +1,7 @@
+rapid-agent-team-config (0.1.12-1) unstable; urgency=medium
+
+  * Initial stable release with deb packaging support.
+  * Cross-platform GUI for OpenCode Rapid Agent Team model configuration.
+  * Zero-credential security guarantee for API keys.
+
+ -- VastNext <contact@vastnext.com>  Mon, 14 Sep 2026 00:00:00 +0000

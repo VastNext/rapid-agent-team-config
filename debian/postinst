@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+# Post-install: register the application in the desktop database
+if [ -d /usr/share/applications ]; then
+    update-desktop-database -q /usr/share/applications/ 2>/dev/null || true
+fi
+if [ -d /usr/share/icons/hicolor ]; then
+    gtk-update-icon-cache -q /usr/share/icons/hicolor/ 2>/dev/null || true
+fi
+
+exit 0
